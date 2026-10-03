@@ -1,8 +1,8 @@
 # Structured Data Capture
 
-Reference for the `nelson-data.py` script. Run these commands via Bash at each workflow step to write machine-readable JSON alongside prose artifacts.
+Reference for the `nelson-data` helper (**not built yet**; every `TODO(script:nelson-data)` below is a placeholder for it). Run these commands via Bash at each workflow step to write machine-readable JSON alongside prose artifacts.
 
-The script lives at `scripts/nelson-data.py` relative to the skill directory. All subcommands handle schema validation, timestamps, and file I/O. Only stdout is consumed — the script source is never loaded into context.
+The helper's location is undecided. All subcommands handle schema validation, timestamps, and file I/O. Only stdout is consumed — the script source is never loaded into context.
 
 Mode enum: `single-session | subagents | agent-team | workflow | hybrid-workflow`.
 
@@ -12,14 +12,10 @@ Mode enum: `single-session | subagents | agent-team | workflow | hybrid-workflow
 
 Run at Step 1 after sailing orders are agreed.
 
-`init` owns the mission-directory contract end-to-end. It generates (or accepts via `--session-id`) an 8-character hex SESSION_ID, creates `.nelson/missions/{YYYY-MM-DD_HHMMSS}_{SESSION_ID}/` with the `damage-reports/` and `turnover-briefs/` subdirectories, writes `sailing-orders.json`, `mission-log.json`, and `fleet-status.json` (initial phase `SAILING_ORDERS`), and writes `.nelson/.active-{SESSION_ID}` as the session marker consumed by recovery/hooks. The mission directory path is printed to stdout; the SESSION_ID is the segment after the last underscore in the directory name.
+`init` owns the mission-directory contract end-to-end. It generates (or accepts via `--session-id`) an 8-character hex SESSION_ID, creates `.state/missions/{YYYY-MM-DD_HHMMSS}_{SESSION_ID}/` with the `damage-reports/` and `turnover-briefs/` subdirectories, writes `sailing-orders.json`, `mission-log.json`, and `fleet-status.json` (initial phase `SAILING_ORDERS`), and writes `.state/.active-{SESSION_ID}` as the session marker consumed by recovery/hooks. The mission directory path is printed to stdout; the SESSION_ID is the segment after the last underscore in the directory name.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py init \
-  --outcome "Refactor auth module to use JWT tokens" \
-  --metric "All 47 auth tests pass, no new dependencies" \
-  --deadline "this_session" \
-  --token-budget 200000
+# TODO(script:nelson-data) init — not built yet
 ```
 
 Optional: pass `--session-id <8-hex>` to use a specific session identifier (e.g., for deterministic tests or when resuming with a known id). Must be exactly 8 lowercase hex characters; invalid values are rejected.
@@ -29,9 +25,7 @@ Optional: pass `--session-id <8-hex>` to use a specific session identifier (e.g.
 Run at Step 1, after `init`, when the mission warrants a standing goal (long autonomous, headless, scheduled, or ultracode runs). Reads `sailing-orders.json` and composes a transcript-verifiable `/goal` condition from `outcome`, `success_metric`, and `stop_criteria`. Prints a ready-to-paste `/goal ...` line to stdout.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py goal-condition \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 \
-  --max-turns 40 --record
+# TODO(script:nelson-data) goal-condition — not built yet
 ```
 
 Arguments:
@@ -50,13 +44,7 @@ Run at Step 3 after the squadron is formed.
 Updates `battle-plan.json` with the squadron section. Appends `squadron_formed` event to `mission-log.json`. Writes initial `fleet-status.json`.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py squadron \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 \
-  --admiral "HMS Victory" --admiral-model opus \
-  --captain "HMS Argyll:frigate:sonnet:1" \
-  --captain "HMS Kent:destroyer:sonnet:2" \
-  --red-cell "HMS Astute" --red-cell-model haiku \
-  --mode agent-team
+# TODO(script:nelson-data) squadron — not built yet
 ```
 
 Repeat `--captain "name:class:model:task_id"` for each captain. Fields are colon-delimited. Valid modes are `single-session`, `subagents`, `agent-team`, `workflow`, and `hybrid-workflow`.
@@ -68,13 +56,7 @@ Run at Step 3 once per task, after owners are assigned during squadron formation
 Appends task to `battle-plan.json`.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py task \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 \
-  --id 1 --name "Auth module refactor" --owner "HMS Argyll" \
-  --deliverable "Refactored auth module with JWT support" \
-  --deps "" --station-tier 1 \
-  --files "src/auth/**" \
-  --modification-targets "auth_handler, JWT_SECRET"
+# TODO(script:nelson-data) task — not built yet
 ```
 
 ### `plan-approved` — Finalize battle plan
@@ -84,8 +66,7 @@ Run at Step 3 after all tasks are added, before the `squadron` call.
 Computes `parallel_tracks` and `critical_path_length` from the dependency graph. Appends `battle_plan_approved` event to `mission-log.json`. Updates `fleet-status.json`.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py plan-approved \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4
+# TODO(script:nelson-data) plan-approved — not built yet
 ```
 
 ### `event` — Log a mission event
@@ -95,25 +76,13 @@ Run at Step 4 between checkpoints for state changes.
 Appends an event to `mission-log.json`. Accepts type-specific key-value pairs validated by the script.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py event \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 \
-  --type task_completed \
-  --checkpoint 2 \
-  --task-id 1 --task-name "Auth module refactor" --owner "HMS Argyll" \
-  --station-tier 1 --verification passed
+# TODO(script:nelson-data) event — not built yet
 ```
 
 Workflow telemetry uses the same loose key-value mechanism. Nelson v1 allows manual entry from Claude Code's `/workflows` view; do not require telemetry fields that are not programmatically exposed.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py event \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 \
-  --type workflow_probe_completed \
-  --workflow-name "auth-audit" --phase probe --status completed \
-  --agents-total 8 --agents-completed 8 \
-  --tokens-used 42000 --elapsed-minutes 11 \
-  --summary "Probe found two real issues and three false positives" \
-  --next-gate "User approval before full run"
+# TODO(script:nelson-data) event — not built yet
 ```
 
 ### `handoff` — Write a typed handoff packet
@@ -123,23 +92,7 @@ Run at Step 5 when a ship is relieved due to context exhaustion, session resumpt
 Writes a schema-validated JSON handoff packet to `{mission-dir}/turnover-briefs/{ship-name}-{timestamp}.json`. Appends a `relief_on_station` event to `mission-log.json` with the packet path. This supersedes `event --type relief_on_station` as the preferred relief path.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py handoff \
-  --mission-dir .nelson/missions/2026-04-08_140000_a1b2c3d4 \
-  --ship-name "HMS Argyll" \
-  --task-id 3 --task-name "API endpoint implementation" \
-  --handoff-type relief_on_station \
-  --completed-subtask "Schema design" \
-  --completed-subtask "GET endpoint" \
-  --partial-output "POST endpoint:60%:Validation logic pending" \
-  --file-ownership "src/api/endpoints.py" \
-  --file-ownership "src/api/validators.py" \
-  --next-step "Complete POST validation" \
-  --next-step "Write integration tests" \
-  --hull-at-handoff 38 --tokens-consumed 145000 \
-  --key-finding "API rate limiting needs custom middleware" \
-  --key-finding "Existing auth works with new endpoints" \
-  --relief-entry "HMS Argyll:context_exhaustion:2026-04-08T14:30:00Z" \
-  --incoming-ship "HMS Kent"
+# TODO(script:nelson-data) handoff — not built yet
 ```
 
 Repeatable arguments: `--completed-subtask`, `--partial-output` (format: `subtask:progress:notes`), `--known-blocker`, `--file-ownership`, `--next-step`, `--open-decision`, `--key-finding`, `--relief-entry` (format: `ship:reason:time`).
@@ -157,13 +110,7 @@ Run at Step 4 at each checkpoint, alongside the prose quarterdeck report.
 Appends a `checkpoint` event to `mission-log.json`. Overwrites `fleet-status.json` with current state.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py checkpoint \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 \
-  --pending 2 --in-progress 2 --completed 1 --blocked 0 \
-  --tokens-spent 45000 --tokens-remaining 155000 \
-  --hull-green 3 --hull-amber 1 --hull-red 0 --hull-critical 0 \
-  --decision continue \
-  --rationale "On track. HMS Kent approaching amber but no relief needed yet."
+# TODO(script:nelson-data) checkpoint — not built yet
 ```
 
 ### `admiralty-decision` — Record an admiral's action decision (read/write mission log)
@@ -173,12 +120,7 @@ Run when the admiral approves, modifies, or rejects an `admiralty_action_require
 Appends an `admiralty_action_completed` event to `mission-log.json`. The event `data` records `task_id`, `decision_type`, `recorded_by`, and `session_marker_present`; it also resolves `task_type` (from `battle-plan.json`) and `ship_class` (from the task owner's squadron in `fleet-status.json`) when those are available.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py admiralty-decision \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 \
-  --task-id 3 \
-  --decision-type modified \
-  --recorded-by Admiral \
-  --notes "Narrowed scope to the auth module only"
+# TODO(script:nelson-data) admiralty-decision — not built yet
 ```
 
 Arguments:
@@ -198,17 +140,10 @@ Run at Step 6 alongside the prose captain's log.
 Auto-computes duration, budget consumption, ship counts, relief counts, violation counts, and blocker statistics from `mission-log.json` and `battle-plan.json`. Writes `stand-down.json`. Appends `mission_complete` event. Writes final `fleet-status.json`.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py stand-down \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 \
-  --outcome-achieved \
-  --actual-outcome "Auth module refactored with JWT support, all tests passing" \
-  --metric-result "47/47 auth tests pass, 0 new dependencies" \
-  --adopt "Station tier 1 for schema migrations worked well" \
-  --adopt "Dedicated destroyer for DB-heavy tasks" \
-  --avoid "Assigning DB work to a frigate"
+# TODO(script:nelson-data) stand-down — not built yet
 ```
 
-Repeat `--adopt` and `--avoid` for each pattern. These are optional — omitting them produces empty lists. After writing `stand-down.json`, the script automatically updates the cross-mission memory store (`.nelson/memory/patterns.json` and `.nelson/memory/standing-order-stats.json`).
+Repeat `--adopt` and `--avoid` for each pattern. These are optional — omitting them produces empty lists. After writing `stand-down.json`, the script automatically updates the cross-mission memory store (`.state/memory/patterns.json` and `.state/memory/standing-order-stats.json`).
 
 ### `form` — Composite formation (recommended)
 
@@ -217,10 +152,7 @@ Run at Step 3 instead of individual `task`, `squadron`, and `plan-approved` call
 Reads a plan JSON file containing tasks and squadron definitions. Registers all tasks, records the squadron, computes DAG metrics, and runs the conflict scan. Optional workflow charter and battle-plan advisory fields are preserved in `battle-plan.json`. Outputs a structured JSON summary to stdout; progress messages go to stderr.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py form \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 \
-  --plan battle-plan-input.json \
-  --mode subagents
+# TODO(script:nelson-data) form — not built yet
 ```
 
 The plan JSON file must contain `squadron` and `tasks` keys:
@@ -285,7 +217,7 @@ Output summary (stdout):
 ```json
 {
   "status": "ok",
-  "mission_dir": ".nelson/missions/2026-03-27_120000_a1b2c3d4",
+  "mission_dir": ".state/missions/2026-03-27_120000_a1b2c3d4",
   "tasks_registered": 1,
   "squadron": { "admiral": "HMS Victory", "captains": 1, "mode": "subagents", "has_red_cell": true },
   "dag_metrics": { "parallel_tracks": 1, "critical_path_length": 1 },
@@ -298,11 +230,7 @@ Output summary (stdout):
 Run to create a mission and complete formation in a single command. Reads sailing orders and battle plan from JSON files. Designed for CI/CD pipeline integration.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py headless \
-  --sailing-orders sailing-orders.json \
-  --battle-plan battle-plan.json \
-  --mode subagents \
-  --auto-approve
+# TODO(script:nelson-data) headless — not built yet
 ```
 
 The sailing orders JSON uses the same fields as `sailing-orders.json`:
@@ -327,8 +255,7 @@ Run at any time for a quick status check. Useful for session resumption, hooks, 
 Reads `fleet-status.json` and `mission-log.json` to produce a compact briefing with per-ship status and elapsed time. Silent no-op if no mission data exists. The `--mission-dir` argument is optional — omitting it is a silent no-op.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py status \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4
+# TODO(script:nelson-data) status — not built yet
 ```
 
 Example output:
@@ -350,26 +277,22 @@ Reads `fleet-status.json`, `battle-plan.json`, and any `.json` handoff packets i
 
 ```bash
 # Auto-discover active mission
-python3 .claude/skills/nelson/scripts/nelson-data.py recover \
-  --missions-dir .nelson/missions
+# TODO(script:nelson-data) recover — not built yet
 
 # Target a specific mission
-python3 .claude/skills/nelson/scripts/nelson-data.py recover \
-  --mission-dir .nelson/missions/2026-04-08_140000_a1b2c3d4
+# TODO(script:nelson-data) recover — not built yet
 
 # Human-readable output
-python3 .claude/skills/nelson/scripts/nelson-data.py recover \
-  --mission-dir .nelson/missions/2026-04-08_140000_a1b2c3d4 \
-  --format text
+# TODO(script:nelson-data) recover — not built yet
 ```
 
-Auto-discovery checks `.nelson/.active-*` files first, then falls back to the most recent mission directory without a `stand-down.json`.
+Auto-discovery checks `.state/.active-*` files first, then falls back to the most recent mission directory without a `stand-down.json`.
 
 Output (JSON):
 
 ```json
 {
-  "mission_dir": ".nelson/missions/2026-04-08_140000_a1b2c3d4",
+  "mission_dir": ".state/missions/2026-04-08_140000_a1b2c3d4",
   "mission_status": "underway",
   "fleet_status": { "..." },
   "handoff_packets": [ { "..." } ],
@@ -382,12 +305,10 @@ Output (JSON):
 
 Run before Step 1 to surface relevant patterns from past missions.
 
-Reads `fleet-intelligence.json`, `.nelson/memory/patterns.json`, and `.nelson/memory/standing-order-stats.json`. Outputs a compact brief suitable for context injection. Use `--context` to surface precedents from similar past missions.
+Reads `fleet-intelligence.json`, `.state/memory/patterns.json`, and `.state/memory/standing-order-stats.json`. Outputs a compact brief suitable for context injection. Use `--context` to surface precedents from similar past missions.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py brief \
-  --missions-dir .nelson/missions \
-  --context "auth module refactor"
+# TODO(script:nelson-data) brief — not built yet
 ```
 
 Add `--json` for machine-readable output.
@@ -396,7 +317,7 @@ Add `--json` for machine-readable output.
 
 Run at any time for focused metric analysis across completed missions.
 
-Reads `fleet-intelligence.json` and `.nelson/memory/standing-order-stats.json`. Supports four metrics:
+Reads `fleet-intelligence.json` and `.state/memory/standing-order-stats.json`. Supports four metrics:
 
 - `success-rate` — Win rate, trend, outcome by fleet size
 - `standing-orders` — Violation frequency, top offenders, failure correlation
@@ -404,13 +325,9 @@ Reads `fleet-intelligence.json` and `.nelson/memory/standing-order-stats.json`. 
 - `all` — All three analyses combined
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py analytics \
-  --missions-dir .nelson/missions \
-  --metric success-rate
+# TODO(script:nelson-data) analytics — not built yet
 
-python3 .claude/skills/nelson/scripts/nelson-data.py analytics \
-  --missions-dir .nelson/missions \
-  --metric all --json --last 10
+# TODO(script:nelson-data) analytics — not built yet
 ```
 
 ### `detect-patterns` — Mine candidate standing orders (read/write memory)
@@ -418,8 +335,7 @@ python3 .claude/skills/nelson/scripts/nelson-data.py analytics \
 Run after a mission stand-down (and after `index`) to surface anti-patterns that recur across the fleet. The detector clusters `avoid` texts, scores each cluster with Fisher's exact + log-odds against mission outcomes, drops anything resembling an existing standing order or a previously dismissed candidate, requires a negative correlation with success (anti-patterns only — not patterns that correlate with wins), and appends survivors to the candidate queue for human review. No standing orders are written or modified by this command — promotion is always a separate, human-initiated step.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py detect-patterns \
-  --missions-dir .nelson/missions
+# TODO(script:nelson-data) detect-patterns — not built yet
 ```
 
 Arguments:
@@ -438,9 +354,7 @@ Output: appends to `{memory_dir}/candidate-standing-orders.json`. On a first run
 Promote writes a new `.md` under the standing-orders directory, inserts a row into the SKILL.md Standing Orders lookup table, and removes the candidate from the pending queue. Promotion is transactional: if any step fails the previous step is rolled back so the repo does not end up with an orphan `.md` or a half-edited SKILL.md.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py promote-candidate \
-  --candidate-id cand-abc123 \
-  --missions-dir .nelson/missions
+# TODO(script:nelson-data) promote-candidate — not built yet
 ```
 
 Arguments:
@@ -461,10 +375,7 @@ The title is re-slugified at the promotion boundary so a hand-edited queue entry
 Move a candidate to the dismissed archive. Subsequent `detect-patterns` runs will not re-surface the same fingerprint, so reviewers are not asked the same question twice.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py dismiss-candidate \
-  --candidate-id cand-abc123 \
-  --reason "duplicate of split-keel" \
-  --missions-dir .nelson/missions
+# TODO(script:nelson-data) dismiss-candidate — not built yet
 ```
 
 Arguments:
@@ -477,26 +388,24 @@ Output: writes `{memory_dir}/dismissed-candidates.json`.
 
 ## Phase Engine
 
-The `nelson-phase.py` script manages the deterministic phase engine. It enforces phase transitions with defined entry/exit criteria and validates phase-appropriate tool usage via PreToolUse hooks.
+The TODO(script:nelson-phase) script manages the deterministic phase engine. It enforces phase transitions with defined entry/exit criteria and validates phase-appropriate tool usage via PreToolUse hooks.
 
 Phases progress linearly: `SAILING_ORDERS` → `BATTLE_PLAN` → `FORMATION` → `PERMISSION` → `UNDERWAY` → `STAND_DOWN`.
 
 ### `current` — Print current phase
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-phase.py current \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4
+# TODO(script:nelson-phase) current — not built yet
 ```
 
-Auto-discovers active mission from `.nelson/.active-*` files if `--mission-dir` is omitted.
+Auto-discovers active mission from `.state/.active-*` files if `--mission-dir` is omitted.
 
 ### `advance` — Advance to next phase
 
 Validates exit criteria for the current phase before transitioning. Appends a `phase_transition` event to `mission-log.json`.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-phase.py advance \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4
+# TODO(script:nelson-phase) advance — not built yet
 ```
 
 ### `validate-tool` — Check tool permission (for hooks)
@@ -504,8 +413,7 @@ python3 .claude/skills/nelson/scripts/nelson-phase.py advance \
 Used by PreToolUse hooks to block phase-inappropriate tool usage. Exits 0 if allowed, 1 if blocked.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-phase.py validate-tool \
-  --tool Agent --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4
+# TODO(script:nelson-phase) validate-tool — not built yet
 ```
 
 ### `set` — Force-set phase (recovery)
@@ -513,8 +421,7 @@ python3 .claude/skills/nelson/scripts/nelson-phase.py validate-tool \
 Escape hatch for recovery scenarios. Skips exit criteria validation.
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-phase.py set \
-  --mission-dir .nelson/missions/2026-03-27_120000_a1b2c3d4 --phase UNDERWAY
+# TODO(script:nelson-phase) set — not built yet
 ```
 
 ## Write Timing
@@ -532,8 +439,8 @@ python3 .claude/skills/nelson/scripts/nelson-phase.py set \
 | Step 5: Workflow stage boundary | `event --type workflow_*` | `mission-log.json` | workflow telemetry from `/workflows` view |
 | Step 5: Relief on Station | `handoff` | `mission-log.json`, `turnover-briefs/{ship}.json` | `turnover-briefs/{ship}.md` (optional companion) |
 | Step 5: Action Stations | `event --type task_completed` | `mission-log.json` | -- |
-| Step 6: Stand Down | `stand-down` | `mission-log.json`, `fleet-status.json`, `stand-down.json`, `.nelson/memory/patterns.json`, `.nelson/memory/standing-order-stats.json` | `captains-log.md` |
-| Post-mission | `index` | `fleet-intelligence.json`, `.nelson/memory/patterns.json`, `.nelson/memory/standing-order-stats.json` | — |
+| Step 6: Stand Down | `stand-down` | `mission-log.json`, `fleet-status.json`, `stand-down.json`, `.state/memory/patterns.json`, `.state/memory/standing-order-stats.json` | `captains-log.md` |
+| Post-mission | `index` | `fleet-intelligence.json`, `.state/memory/patterns.json`, `.state/memory/standing-order-stats.json` | — |
 | Pre-mission | `brief` | (read-only) | — |
 | Any time | `analytics` | (read-only) | — |
 
@@ -812,7 +719,7 @@ Auto-computed from `mission-log.json` and `battle-plan.json` by the `stand-down`
 
 ## Memory Store
 
-Cross-mission data is stored in `.nelson/memory/`. This directory is created automatically by `stand-down` and `index`.
+Cross-mission data is stored in `.state/memory/`. This directory is created automatically by `stand-down` and `index`.
 
 ### patterns.json (Append-Only)
 
@@ -897,4 +804,4 @@ This stdout line (~20 tokens) replaces a ~200-token JSON Write call. The full JS
 
 ## Schema Coupling
 
-The `_build_mission_record` and `_extract_fleet_details` functions in `nelson-data.py` depend on the JSON schemas defined above. If you rename or restructure fields in the schemas (e.g. `stand-down.json`, `battle-plan.json`, `sailing-orders.json`, `mission-log.json`), you must update those functions to match. `_compute_analytics` also depends on the field names produced by `_build_mission_record`. The memory store functions (`_extract_patterns_from_mission`, `_update_patterns_store`, `_update_standing_order_stats`, `_build_intelligence_brief`) depend on both the mission JSON schemas and the memory store schemas (`patterns.json`, `standing-order-stats.json`).
+The `_build_mission_record` and `_extract_fleet_details` functions in TODO(script:nelson-data) depend on the JSON schemas defined above. If you rename or restructure fields in the schemas (e.g. `stand-down.json`, `battle-plan.json`, `sailing-orders.json`, `mission-log.json`), you must update those functions to match. `_compute_analytics` also depends on the field names produced by `_build_mission_record`. The memory store functions (`_extract_patterns_from_mission`, `_update_patterns_store`, `_update_standing_order_stats`, `_build_intelligence_brief`) depend on both the mission JSON schemas and the memory store schemas (`patterns.json`, `standing-order-stats.json`).

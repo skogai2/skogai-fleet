@@ -2,7 +2,7 @@
 
 ## Typed Handoff Packet (Primary)
 
-The primary turnover format is a structured JSON handoff packet written by `nelson-data.py handoff`. See `references/structured-data.md` for the schema and command reference.
+The primary turnover format is a structured JSON handoff packet written by `TODO(script:nelson-data) handoff`. See `references/structured-data.md` for the schema and command reference.
 
 The typed packet is written to `{mission-dir}/turnover-briefs/{ship-name}-{timestamp}.json`. The replacement ship reads this JSON file as its first action.
 
@@ -10,7 +10,7 @@ The typed packet is written to `{mission-dir}/turnover-briefs/{ship-name}-{times
 
 When a typed handoff packet has been written, the damaged ship may optionally also write a prose companion brief to `{mission-dir}/turnover-briefs/{ship-name}-{timestamp}.md` using the template below. This prose version supplements the JSON packet with a human-readable narrative for manual review. It is not the primary recovery artifact.
 
-If `nelson-data.py handoff` is unavailable (e.g., script error, pre-upgrade missions), the prose brief below serves as the fallback format.
+If `TODO(script:nelson-data) handoff` is unavailable (e.g., script error, pre-upgrade missions), the prose brief below serves as the fallback format.
 
 ```text
 == TURNOVER BRIEF ==

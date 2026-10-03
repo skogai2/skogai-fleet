@@ -117,7 +117,7 @@ Acceptance criteria flow through the pipeline:
 
 1. **Battle Plan** — each task inherits the criteria of its parent effect.
 2. **Captains** — know what "done" looks like before writing a line of code. They pick the appropriate verification method per criterion.
-3. **Quarterdeck** — verifies every criterion and records both outcome (`pass` / `fail` / `not-verified`) and method used via `nelson-data.py estimate-outcome`.
+3. **Quarterdeck** — verifies every criterion and records both outcome (`pass` / `fail` / `not-verified`) and method used via `TODO(script:nelson-data) estimate-outcome`.
 
 ## Adaptive planning — dated addenda
 

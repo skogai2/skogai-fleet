@@ -19,7 +19,7 @@ Hull integrity monitoring may surface context exhaustion before crew overrun is 
 
 1. Admiral signals the damaged ship to prepare for turnover.
 2. Damaged ship pauses current work and commits or saves any in-progress outputs.
-3. Damaged ship writes a typed handoff packet by running `python3 .claude/skills/nelson/scripts/nelson-data.py handoff --mission-dir {mission-dir} --ship-name "..." --task-id N --task-name "..." --handoff-type relief_on_station ...` (see `references/structured-data.md` for full arguments). This writes a JSON handoff packet to `{mission-dir}/turnover-briefs/{ship-name}-{timestamp}.json` and logs the `relief_on_station` event. Optionally, the ship may also write a prose companion brief to `{mission-dir}/turnover-briefs/{ship-name}-{timestamp}.md` using `references/admiralty-templates/turnover-brief.md` for human readability.
+3. Damaged ship writes a typed handoff packet by running `TODO(script:nelson-data) handoff` (see `references/structured-data.md` for full arguments). This writes a JSON handoff packet to `{mission-dir}/turnover-briefs/{ship-name}-{timestamp}.json` and logs the `relief_on_station` event. Optionally, the ship may also write a prose companion brief to `{mission-dir}/turnover-briefs/{ship-name}-{timestamp}.md` using `references/admiralty-templates/turnover-brief.md` for human readability.
 4. Damaged ship signals admiral that the handoff packet is written and provides the file path.
 5. Admiral spawns a replacement ship. The replacement need not be the same ship class — select the class that matches the characteristics of the remaining work (e.g., swap a destroyer for a frigate if the remaining work is lighter).
 6. Admiral briefs the replacement ship with a crew briefing that includes the handoff packet file path. The replacement reads the JSON handoff packet as its first action.
@@ -44,7 +44,7 @@ No action required. Continue normal operations.
 
 ### Red Hull Integrity (40-59% remaining)
 
-1. Admiral writes a typed handoff packet via `nelson-data.py handoff --handoff-type relief_on_station ...` to `{mission-dir}/turnover-briefs/flagship-{timestamp}.json`. Additionally, write a prose flagship turnover brief to `{mission-dir}/turnover-briefs/flagship-{timestamp}.md` containing:
+1. Admiral writes a typed handoff packet via `TODO(script:nelson-data) handoff --handoff-type relief_on_station ...` to `{mission-dir}/turnover-briefs/flagship-{timestamp}.json`. Additionally, write a prose flagship turnover brief to `{mission-dir}/turnover-briefs/flagship-{timestamp}.md` containing:
    - Full sailing orders (copied verbatim).
    - Battle plan with current task statuses, owners, and ship assignments.
    - All active ship statuses and their hull integrity levels.
@@ -75,7 +75,7 @@ When a task requires multiple handovers (A hands to B, B hands to C), maintain i
 When a crew member aboard a ship exhausts their context, the captain handles relief at ship level.
 
 1. Captain identifies the crew member at Red or Critical hull integrity.
-2. Captain instructs the crew member to write a handoff packet (or turnover brief if the crew member cannot run `nelson-data.py`) to file.
+2. Captain instructs the crew member to write a handoff packet (or turnover brief if the crew member cannot run TODO(script:nelson-data)) to file.
 3. Captain spawns a replacement crew member and provides the handoff packet path.
 4. Captain issues a shutdown request to the exhausted crew member.
 5. Captain updates the ship manifest to reflect the new assignment.

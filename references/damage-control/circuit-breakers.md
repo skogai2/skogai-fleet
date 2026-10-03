@@ -6,7 +6,7 @@ Use to supplement the admiral's checkpoint rhythm with automatic, threshold-base
 
 Circuit breakers are a set of named thresholds evaluated at two points:
 
-1. **At each quarterdeck checkpoint**, by `nelson-data.py checkpoint`, against the freshly-written `fleet-status.json` and mission log.
+1. **At each quarterdeck checkpoint**, by `TODO(script:nelson-data) checkpoint`, against the freshly-written `fleet-status.json` and mission log.
 2. **On `TeammateIdle` hook fires**, for per-ship idle timeouts, via the `idle-ship` hook handler.
 
 When a threshold is crossed, a `circuit_breaker_tripped` event is appended to `mission-log.json` with the value, the threshold, and the recommended damage control procedure. The admiral sees a single advisory line per trip on stdout (or stderr for the idle-ship hook) and decides what to do.
@@ -44,13 +44,13 @@ Circuit breaker thresholds live under `sailing-orders.json > circuit_breakers`. 
 }
 ```
 
-Unknown keys are silently ignored so typos cannot secretly override defaults. Missing keys fall back to the defaults in `nelson_circuit_breakers.py`.
+Unknown keys are silently ignored so typos cannot secretly override defaults. Missing keys fall back to the defaults in `TODO(script:nelson_circuit_breakers)` (not built yet).
 
 To disable all circuit breakers for a mission (e.g. a smoke test mission), set `enabled: false`.
 
 ## Output Format
 
-When a checkpoint trips a breaker, `nelson-data.py checkpoint` prints one line per trip to stdout after the checkpoint summary:
+When a checkpoint trips a breaker, `TODO(script:nelson-data) checkpoint` prints one line per trip to stdout after the checkpoint summary:
 
 ```
 [nelson-data] Checkpoint 3 recorded

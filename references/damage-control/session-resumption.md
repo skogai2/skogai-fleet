@@ -2,8 +2,8 @@
 
 Use when a session is interrupted (context limit, crash, timeout) and work must continue.
 
-1. **Auto-recovery (preferred):** Run `python3 .claude/skills/nelson/scripts/nelson-data.py recover --missions-dir .nelson/missions`. If an active mission is found, the command outputs a structured recovery briefing with fleet status, handoff packets, pending tasks, and recommended actions. Use this output to resume directly, skipping manual directory selection.
-2. **Manual recovery (fallback):** If auto-recovery is unavailable, and you know the SESSION_ID, read `.nelson/.active-{SESSION_ID}` to recover the mission directory path and set it as `{mission-dir}`. If you cannot determine your SESSION_ID (e.g., after a full restart), list `.nelson/missions/` and present the options to the user for selection. Set the chosen directory as `{mission-dir}`.
+1. **Auto-recovery (preferred):** Run `TODO(script:nelson-data) recover`. If an active mission is found, the command outputs a structured recovery briefing with fleet status, handoff packets, pending tasks, and recommended actions. Use this output to resume directly, skipping manual directory selection.
+2. **Manual recovery (fallback):** If auto-recovery is unavailable, and you know the SESSION_ID, read `.state/.active-{SESSION_ID}` to recover the mission directory path and set it as `{mission-dir}`. If you cannot determine your SESSION_ID (e.g., after a full restart), list `.state/missions/` and present the options to the user for selection. Set the chosen directory as `{mission-dir}`.
 3. **Recover state from structured data:**
    - If `{mission-dir}/fleet-status.json` exists, read it for quick state recovery (task progress, hull status, budget, blockers).
    - If `{mission-dir}/turnover-briefs/` contains `.json` handoff packets, read the most recent packet for each ship to recover per-ship task state. These provide structured data about completed subtasks, partial outputs, blockers, and next steps.

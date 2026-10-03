@@ -2,14 +2,12 @@
 name: nelson
 description: Orchestrates multi-agent task execution using a Royal Navy squadron metaphor — from mission planning through parallel work coordination to stand-down. Use when work needs parallel agent orchestration, tight task coordination with quality gates, structured delegation with progress checkpoints, or a documented decision log.
 argument-hint: "[mission description]"
-paths: [".nelson/**"]
+paths: [".state/**"]
 ---
 
 # Nelson
 
-```!
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/nelson/scripts/nelson-data.py" status
-```
+<!-- TODO(script:nelson-data) status — dynamic status injection, not built yet -->
 
 Execute this workflow for the user's mission.
 
@@ -36,17 +34,17 @@ Out of scope: Migration script for existing sessions
 ```
 
 **Establish Mission Directory:**
-- **New session:** Run `nelson-data.py init` (see "Structured Data Capture" below). The script owns directory creation: it generates an 8-character hex SESSION_ID, creates `.nelson/missions/{YYYY-MM-DD_HHMMSS}_{SESSION_ID}/` with the `damage-reports/` and `turnover-briefs/` subdirectories, writes `sailing-orders.json`, `mission-log.json`, and `fleet-status.json`, writes `.nelson/.active-{SESSION_ID}` as the session marker, and prints the mission directory path to stdout. Capture that path as `{mission-dir}` for the remainder of this mission. The SESSION_ID is the segment after the last underscore in the directory name. If you need a specific SESSION_ID (e.g., testing or resuming a known id), pass `--session-id <8-hex>`.
-- **Resumed session:** First, attempt auto-recovery by running `python3 .claude/skills/nelson/scripts/nelson-data.py recover --missions-dir .nelson/missions`. If this finds an active mission with handoff packets, use the structured recovery briefing to resume directly. Otherwise, if you know the SESSION_ID, read `.nelson/.active-{SESSION_ID}` to recover the mission path. Set that path as `{mission-dir}`. If you cannot determine your SESSION_ID (e.g., after a full restart), list `.nelson/missions/` and present the options to the user for selection. Set the chosen directory as `{mission-dir}`. Recover state per `references/damage-control/session-resumption.md` (prefer JSON files, fall back to quarterdeck report prose). **Re-establish the standing goal:** a `/goal` is restored automatically on `--resume`/`--continue` but not in a fresh session, so if none is active (check with a bare `/goal`) and `sailing-orders.json` carries a recorded `goal_condition`, re-issue it per `references/goal-alignment.md`.
+- **New session:** Run `TODO(script:nelson-data) init` (see "Structured Data Capture" below). The script owns directory creation: it generates an 8-character hex SESSION_ID, creates `.state/missions/{YYYY-MM-DD_HHMMSS}_{SESSION_ID}/` with the `damage-reports/` and `turnover-briefs/` subdirectories, writes `sailing-orders.json`, `mission-log.json`, and `fleet-status.json`, writes `.state/.active-{SESSION_ID}` as the session marker, and prints the mission directory path to stdout. Capture that path as `{mission-dir}` for the remainder of this mission. The SESSION_ID is the segment after the last underscore in the directory name. If you need a specific SESSION_ID (e.g., testing or resuming a known id), pass `--session-id <8-hex>`.
+- **Resumed session:** First, attempt auto-recovery by running `TODO(script:nelson-data) recover`. If this finds an active mission with handoff packets, use the structured recovery briefing to resume directly. Otherwise, if you know the SESSION_ID, read `.state/.active-{SESSION_ID}` to recover the mission path. Set that path as `{mission-dir}`. If you cannot determine your SESSION_ID (e.g., after a full restart), list `.state/missions/` and present the options to the user for selection. Set the chosen directory as `{mission-dir}`. Recover state per `references/damage-control/session-resumption.md` (prefer JSON files, fall back to quarterdeck report prose). **Re-establish the standing goal:** a `/goal` is restored automatically on `--resume`/`--continue` but not in a fresh session, so if none is active (check with a bare `/goal`) and `sailing-orders.json` carries a recorded `goal_condition`, re-issue it per `references/goal-alignment.md`.
 
 All mission artifacts — captain's log, quarterdeck reports, damage reports, and turnover briefs — are written inside `{mission-dir}`.
 
-**Structured Data Capture:** Run the `nelson-data.py` script located in the skill's directory (e.g., `python3 .claude/skills/nelson/scripts/nelson-data.py init --outcome "..." --metric "..." --deadline "..."`). If installed globally, it may be in `~/.claude/skills/nelson/scripts/`. `init` creates the mission directory, the initial JSON files (`sailing-orders.json`, `mission-log.json`, `fleet-status.json` with initial phase `SAILING_ORDERS`), and the `.nelson/.active-{SESSION_ID}` marker in one atomic step. See `references/structured-data.md` for the full argument list.
+**Structured Data Capture:** Run `TODO(script:nelson-data) init`. The helper is not built yet; this placeholder marks where the call goes. `init` creates the mission directory, the initial JSON files (`sailing-orders.json`, `mission-log.json`, `fleet-status.json` with initial phase `SAILING_ORDERS`), and the `.state/.active-{SESSION_ID}` marker in one atomic step. See `references/structured-data.md` for the full argument list.
 
 **Phase Advance:** After structured data capture, advance the mission phase from SAILING_ORDERS to ESTIMATE:
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-phase.py advance --mission-dir {mission-dir}
+# TODO(script:nelson-phase) advance — not built yet
 ```
 
 **Session Hygiene:** Execute session hygiene per `references/damage-control/session-hygiene.md`. Skip this step when resuming an interrupted session.
@@ -54,8 +52,7 @@ python3 .claude/skills/nelson/scripts/nelson-phase.py advance --mission-dir {mis
 **Standing Goal (optional):** For long autonomous, headless (`-p`), scheduled, or ultracode missions — where standing down too early is the failure mode — offer to set a Claude Code `/goal` that keeps the session from stopping until the mission is genuinely complete. Compose it from the sailing orders rather than by hand:
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py goal-condition \
-  --mission-dir {mission-dir} --record
+# TODO(script:nelson-data) goal-condition — not built yet
 ```
 
 Present the printed `/goal ...` line for the user to set. If the user already set a `/goal` before invoking Nelson, do NOT replace it — read it back with a bare `/goal`, reconcile the sailing orders to it, and only re-issue a composed goal with the user's agreement. Skip this for short interactive missions where the human is steering turn by turn. You MUST read `references/goal-alignment.md` before setting a goal — the evaluator judges the condition against the conversation transcript only, so completion evidence must be surfaced into chat (this shapes Stand Down in Step 8).
@@ -67,10 +64,9 @@ Present the printed `/goal ...` line for the user to set. If the user already se
 Give an honest recommendation. For straightforward missions with clear scope in a single subsystem, proceed without the Estimate. For complex, ambiguous, or multi-system missions, recommend conducting it. If the user accepts, proceed to Step 2. If the user declines, record the decision and skip to Step 3:
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py skip-estimate \
-  --mission-dir {mission-dir} --reason "[one-line rationale]"
-python3 .claude/skills/nelson/scripts/nelson-phase.py advance --mission-dir {mission-dir}
-python3 .claude/skills/nelson/scripts/nelson-phase.py advance --mission-dir {mission-dir}
+# TODO(script:nelson-data) skip-estimate — not built yet
+# TODO(script:nelson-phase) advance — not built yet
+# TODO(script:nelson-phase) advance — not built yet
 ```
 
 The first `advance` moves from SAILING_ORDERS to ESTIMATE. The second `advance` moves from ESTIMATE to BATTLE_PLAN; the exit validator accepts the transition because `skip-estimate` has already recorded the opt-out in `sailing-orders.json`.
@@ -100,7 +96,7 @@ Write the estimate to `{mission-dir}/estimate.md` with one H2 section per questi
 **Phase Advance:** After the user approves the final estimate, advance from ESTIMATE to BATTLE_PLAN:
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-phase.py advance --mission-dir {mission-dir}
+# TODO(script:nelson-phase) advance — not built yet
 ```
 
 ## 3. Draft Battle Plan
@@ -140,7 +136,7 @@ If any answer triggers a standing order, you MUST apply the corrective action an
 
 **Persist the drafted plan.** Before proceeding to Step 4, write the complete battle plan to `{mission-dir}/battle-plan.md` using the template at `references/admiralty-templates/battle-plan.md`. Include the commander's intent verbatim from Estimate §2, each task brief in template form, and the Standing Order Check answers. **This is a safe compaction point — admiral state is now fully on disk.**
 
-**Structured Data Capture:** Task registration requires owners, which are assigned in Step 4. No `nelson-data.py` script calls at this step.
+**Structured Data Capture:** Task registration requires owners, which are assigned in Step 4. No TODO(script:nelson-data) script calls at this step.
 
 ## 4. Form the Squadron
 
@@ -214,28 +210,25 @@ Actions marked `timing: before task starts` require your sign-off before the rel
 
 Do not spawn any agents, create any tasks, or launch any `workflow` / `hybrid-workflow` run until the user approves. If the user requests changes, revise and redisplay before proceeding.
 
-> **Note:** For headless and CI invocation, use `nelson-data.py headless --auto-approve` which combines Steps 1-3 and skips the interactive approval gate. See `references/structured-data.md` for details.
+> **Note:** For headless and CI invocation, use `TODO(script:nelson-data) headless --auto-approve` which combines Steps 1-3 and skips the interactive approval gate. See `references/structured-data.md` for details.
 
 **Structured Data Capture:** Once formation is approved, use the composite `form` command (recommended) or the individual commands below.
 
 **Recommended — composite `form` command:** Write a plan JSON file with the task and squadron definitions, then run a single command:
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py form \
-  --mission-dir {mission-dir} \
-  --plan {mission-dir}/plan-input.json \
-  --mode [mode]
+# TODO(script:nelson-data) form — not built yet
 ```
 
 This registers all tasks, records the squadron, computes DAG metrics, and runs the conflict scan in one step. See `references/structured-data.md` for the plan JSON schema and output format.
 
 **Alternative — individual commands:**
-1. `python3 .claude/skills/nelson/scripts/nelson-data.py task --mission-dir {mission-dir} --id N --name "..." --owner "..." ...` for each task (owners are now known from formation). See `references/structured-data.md` for task arguments.
-2. `python3 .claude/skills/nelson/scripts/nelson-data.py plan-approved --mission-dir {mission-dir}` to finalise the battle plan and compute DAG metrics.
-3. `python3 .claude/skills/nelson/scripts/nelson-phase.py advance --mission-dir {mission-dir}` to advance from BATTLE_PLAN to FORMATION (validates all tasks have station tiers).
-4. `python3 .claude/skills/nelson/scripts/nelson-data.py squadron --mission-dir {mission-dir} --admiral "..." --admiral-model [model] --captain "name:class:model:task_id" ... --mode [mode]` to record squadron composition. Repeat `--captain` for each captain. See `references/structured-data.md` for the full argument list.
-5. `python3 .claude/skills/nelson/scripts/nelson_conflict_scan.py --plan {mission-dir}/battle-plan.json` to verify there are no file ownership conflicts. If conflicts are found, you MUST resolve them and update the battle plan before proceeding.
-6. `python3 .claude/skills/nelson/scripts/nelson-phase.py advance --mission-dir {mission-dir}` to advance from FORMATION to PERMISSION.
+1. `TODO(script:nelson-data) task` for each task (owners are now known from formation). See `references/structured-data.md` for task arguments.
+2. `TODO(script:nelson-data) plan-approved` to finalise the battle plan and compute DAG metrics.
+3. `TODO(script:nelson-phase) advance` to advance from BATTLE_PLAN to FORMATION (validates all tasks have station tiers).
+4. `TODO(script:nelson-data) squadron` to record squadron composition. Repeat `--captain` for each captain. See `references/structured-data.md` for the full argument list.
+5. `TODO(script:nelson_conflict_scan) --plan` to verify there are no file ownership conflicts. If conflicts are found, you MUST resolve them and update the battle plan before proceeding.
+6. `TODO(script:nelson-phase) advance` to advance from FORMATION to PERMISSION.
 
 **Before proceeding to Step 5:** Verify that sailing orders exist, all tasks have owners and deliverables, and every task has an action station tier.
 
@@ -250,7 +243,7 @@ This registers all tasks, records the squadron, computes DAG metrics, and runs t
 
 **Edit permissions:** When spawning any agent whose task involves editing files, set `mode: "acceptEdits"` on the `Agent` tool call. Omitting this can cause a permission race condition that silently stalls the agent at its first edit. When in doubt, include it.
 
-**Turnover Briefs:** When a ship is relieved due to context exhaustion, it writes a typed handoff packet using `python3 .claude/skills/nelson/scripts/nelson-data.py handoff ...` (see `references/structured-data.md`). An optional prose companion brief may also be written using `references/admiralty-templates/turnover-brief.md`. See `references/damage-control/relief-on-station.md` for the full procedure.
+**Turnover Briefs:** When a ship is relieved due to context exhaustion, it writes a typed handoff packet using `TODO(script:nelson-data) handoff` (see `references/structured-data.md`). An optional prose companion brief may also be written using `references/admiralty-templates/turnover-brief.md`. See `references/damage-control/relief-on-station.md` for the full procedure.
 
 ## 5. Get Permission to Sail
 
@@ -263,9 +256,8 @@ This registers all tasks, records the squadron, computes DAG metrics, and runs t
 **Phase Advance:** After the user grants permission, log the event and advance:
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py event \
-  --mission-dir {mission-dir} --type permission_granted --checkpoint 0
-python3 .claude/skills/nelson/scripts/nelson-phase.py advance --mission-dir {mission-dir}
+# TODO(script:nelson-data) event — not built yet
+# TODO(script:nelson-phase) advance — not built yet
 ```
 
 This transitions the mission from PERMISSION to UNDERWAY, unlocking agent spawning and task creation.
@@ -306,7 +298,7 @@ If the task is complete and no pending task depends on it, proceed to shutdown p
         - `wrong-ensign.md`: Is the admiral or any captain using tools from the wrong execution mode?
         - `pulling-the-oar.md`: Has any senior agent (admiral or captain) absorbed work from a failed subagent dispatch instead of fixing the brief and re-dispatching?
     - **Write the quarterdeck report to disk** at `{mission-dir}/quarterdeck-report.md` at every checkpoint using `references/admiralty-templates/quarterdeck-report.md`. Do not skip this when hull is Green — compaction can occur at any time and the on-disk report is the only recovery point. Before writing, if `quarterdeck-report.md` already exists in `{mission-dir}`, find all files matching glob pattern `quarterdeck-report-[0-9]*.md`, determine N as one greater than the highest N found (0 if none exist), rename the existing file to `quarterdeck-report-N.md`, then write the new report. This keeps the latest report at the canonical path while preserving history.
-    - **Structured data capture:** Run `python3 .claude/skills/nelson/scripts/nelson-data.py checkpoint --mission-dir {mission-dir} --pending N --in-progress N --completed N ...` with current progress, budget, hull, and decision data. Between checkpoints, run `python3 .claude/skills/nelson/scripts/nelson-data.py event --mission-dir {mission-dir} --type <event_type> ...` for state changes (task completions, blockers, hull threshold crossings, standing order violations). See `references/structured-data.md` for event types and arguments.
+    - **Structured data capture:** Run `TODO(script:nelson-data) checkpoint` with current progress, budget, hull, and decision data. Between checkpoints, run `TODO(script:nelson-data) event` for state changes (task completions, blockers, hull threshold crossings, standing order violations). See `references/structured-data.md` for event types and arguments.
     - Check `TaskList` for any tasks with description prefixed `[AWAITING-ADMIRALTY]:`. If any exist, surface the ask to Admiralty immediately — do not batch to the next checkpoint.
     - Cross-reference the battle plan against `TaskList`: for any task marked `admiralty-action-required: yes` in the battle plan that shows status `completed`, confirm there is a quarterdeck log entry recording admiralty sign-off. If no such entry exists, flag to Admiralty for manual verification — the task may have completed without the intended human step.
 - Re-scope early when a task drifts from mission metric.
@@ -354,15 +346,15 @@ Reference `references/admiralty-templates/red-cell-review.md` for the red-cell r
 
 Reference `references/admiralty-templates/captains-log.md` for the captain's log template and `references/commendations.md` for Mentioned in Despatches criteria.
 
-**Structured Data Capture:** Before writing the captain's log, run `python3 .claude/skills/nelson/scripts/nelson-data.py stand-down --mission-dir {mission-dir} --outcome-achieved --actual-outcome "..." --metric-result "..."` to capture the structured mission summary. See `references/structured-data.md` for the full argument list.
+**Structured Data Capture:** Before writing the captain's log, run `TODO(script:nelson-data) stand-down` to capture the structured mission summary. See `references/structured-data.md` for the full argument list.
 
 **Task List Cleanup:** Verify all task list entries reflect final state. Mark any remaining `in_progress` tasks as `completed` if their work is done, or note incomplete tasks in the captain's log. This ensures the Claude Code task list shows an accurate final summary.
 
-**Session State Cleanup:** Remove the session state file by deleting `.nelson/.active-{SESSION_ID}`.
+**Session State Cleanup:** Remove the session state file by deleting `.state/.active-{SESSION_ID}`.
 
 **Mission Complete Gate:** You MUST NOT declare the mission complete until `{mission-dir}/captains-log.md` exists on disk and has been confirmed readable. If context pressure is high, write a minimal log noting which sections were abbreviated — but the file must exist. Skipping Step 8 is never permitted.
 
-**Clear the Standing Goal:** If a `/goal` is active, its evaluator only sees this conversation — so state the completion evidence in chat for the goal to auto-clear: the success metric result (matching the sailing orders' metric), that `captains-log.md` was written (with its path), and that stand-down was recorded. Do NOT tell the user to run `/goal clear` on a successful mission — the goal clears itself once this evidence is visible. Only if the mission was abandoned: run `scuttle-and-reform`, state the blocking reason in chat, and log a `goal_cleared` event via `nelson-data.py event`. See `references/goal-alignment.md`.
+**Clear the Standing Goal:** If a `/goal` is active, its evaluator only sees this conversation — so state the completion evidence in chat for the goal to auto-clear: the success metric result (matching the sailing orders' metric), that `captains-log.md` was written (with its path), and that stand-down was recorded. Do NOT tell the user to run `/goal clear` on a successful mission — the goal clears itself once this evidence is visible. Only if the mission was abandoned: run `scuttle-and-reform`, state the blocking reason in chat, and log a `goal_cleared` event via `TODO(script:nelson-data) event`. See `references/goal-alignment.md`.
 
 **GitHub Star Prompt (one-time, success only):** After the Mission Complete Gate passes, ask the user once whether they would like to star the Nelson repo (canonical slug `harrymunro/nelson`). Run all three preflight checks below; if any prints `SKIP`, skip the prompt silently and finish Stand Down.
 
@@ -428,7 +420,7 @@ This is a single ask per user across all Nelson projects. Either answer locks th
 
 ## Standing Orders
 
-Consult the specific standing order that matches the situation. The library is empirically extensible: see `scripts/nelson_data_patterns.py` for the promotion workflow that mines new candidate orders from mission patterns and surfaces them for human review.
+Consult the specific standing order that matches the situation. The library is empirically extensible: see `TODO(script:nelson_data_patterns)` for the promotion workflow that mines new candidate orders from mission patterns and surfaces them for human review.
 
 | Situation | Standing Order |
 |---|---|
@@ -470,7 +462,7 @@ Consult the specific procedure that matches the situation.
 
 ## Admiralty Doctrine
 
-- Include this instruction in any admiral's compaction summary: Re-read the quarterdeck report at the mission directory path to recover `{mission-dir}`. If the path is unknown, read `.nelson/.active-{SESSION_ID}` if you know the SESSION_ID, otherwise list `.nelson/missions/` and present the options to the user for selection. Then re-read `references/standing-orders/admiral-at-the-helm.md` to confirm you are in coordination role.
+- Include this instruction in any admiral's compaction summary: Re-read the quarterdeck report at the mission directory path to recover `{mission-dir}`. If the path is unknown, read `.state/.active-{SESSION_ID}` if you know the SESSION_ID, otherwise list `.state/missions/` and present the options to the user for selection. Then re-read `references/standing-orders/admiral-at-the-helm.md` to confirm you are in coordination role.
 - Treat `/compact` as safe at any phase boundary (after Step 1, 2, 3, 4, and at every quarterdeck checkpoint in Step 6). The narrow unsafe window is inside Step 5 — between user approval and the admiral's `permission_granted` / phase advance / agent spawn turn.
 - Optimize for mission throughput, not equal work distribution.
 - Prefer replacing stalled agents over waiting on undefined blockers.

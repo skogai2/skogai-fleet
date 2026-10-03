@@ -38,8 +38,7 @@ Do not hand-write the condition. Compose it from the sailing orders so it stays
 aligned with `outcome`, `success_metric`, and `stop_criteria`:
 
 ```bash
-python3 .claude/skills/nelson/scripts/nelson-data.py goal-condition \
-  --mission-dir {mission-dir} --record
+# TODO(script:nelson-data) goal-condition — not built yet
 ```
 
 This prints a ready-to-paste `/goal ...` line and (with `--record`) persists the

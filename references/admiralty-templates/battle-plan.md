@@ -43,7 +43,7 @@ Task ID:
 
 **Modification targets.** When a task extends existing code, the `Modification targets` field anchors the captain to specific functions, variables, and configuration that must be modified in place. This field flows from the Estimate's Reconnaissance (Q1) and Terrain (Q4) — if those questions identified the existing code, the Battle Plan must preserve that specificity. Omit the field for greenfield tasks where no existing code is being extended.
 
-**Acceptance criteria inheritance.** Each task inherits the acceptance criteria of its parent effect from the Estimate (§3). Captains own the choice of verification method per criterion (test, type-check, lint, review, or visual). The quarterdeck records each outcome (`pass` / `fail` / `not-verified`) via `nelson-data.py estimate-outcome`.
+**Acceptance criteria inheritance.** Each task inherits the acceptance criteria of its parent effect from the Estimate (§3). Captains own the choice of verification method per criterion (test, type-check, lint, review, or visual). The quarterdeck records each outcome (`pass` / `fail` / `not-verified`) via `TODO(script:nelson-data) estimate-outcome`.
 
 JSON schema note: the battle-plan `task` object accepts an optional `acceptance_criteria: list[str]` field carrying the inherited criteria. This enables programmatic aggregation of verification outcomes. The `task` object also accepts an optional `modification_targets: list[str]` field for tracking the functions, environment variables, or configuration that must be modified in place.
 
