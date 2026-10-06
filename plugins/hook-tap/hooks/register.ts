@@ -2,7 +2,7 @@ import type { Register } from 'claude-code'
 
 // Relative to the session's working directory. Run claude from the repo root
 // (or change this) so the log lands where you expect.
-const LOG = 'plugins/hook-tap/log.jsonl'
+const LOG = '.skogai/logs/hook-tap/log.jsonl'
 
 // $.fs has no append, so each write reads the file, adds a line, and writes it
 // back. Writes are chained so two events cannot overwrite each other.
