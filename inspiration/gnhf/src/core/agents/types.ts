@@ -1,0 +1,230 @@
+import { parseAgentJson } from "./json-extract.js";
+
+export interface AgentOutput {
+  success: boolean;
+  summary: string;
+  key_changes_made: unknown;
+  key_learnings: unknown;
+  should_fully_stop?: boolean;
+}
+
+export interface AgentOutputSchema {
+  type: "object";
+  additionalProperties: false;
+  properties: Record<
+    string,
+    { type: string; items?: { type: string }; enum?: string[] }
+  >;
+  required: string[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function describeSchemaType(name: string, type: string): string {
+  const article = /^[aeiou]/.test(type) ? "an" : "a";
+  return `${name} must be ${article} ${type}`;
+}
+
+export function validateAgentOutput(
+  value: unknown,
+  schema: AgentOutputSchema,
+): AgentOutput {
+  if (!isRecord(value)) {
+    throw new Error("expected an object");
+  }
+
+  if (schema.additionalProperties === false) {
+    const allowed = new Set(Object.keys(schema.properties));
+    const extraKey = Object.keys(value).find((key) => !allowed.has(key));
+    if (extraKey) {
+      throw new Error(`unexpected property ${extraKey}`);
+    }
+  }
+
+  for (const name of schema.required) {
+    if (!(name in value)) {
+      throw new Error(`${name} is required`);
+    }
+  }
+
+  for (const [name, property] of Object.entries(schema.properties)) {
+    if (!(name in value)) {
+      continue;
+    }
+    const propertyValue = value[name];
+
+    if (property.type === "array") {
+      if (
+        !Array.isArray(propertyValue) ||
+        property.items?.type !== "string" ||
+        !propertyValue.every((item) => typeof item === "string")
+      ) {
+        throw new Error(`${name} must be an array of strings`);
+      }
+      continue;
+    }
+
+    if (typeof propertyValue !== property.type) {
+      throw new Error(describeSchemaType(name, property.type));
+    }
+
+    if (property.enum && !property.enum.includes(propertyValue as string)) {
+      throw new Error(
+        `${name} must be one of ${property.enum.map((item) => JSON.stringify(item)).join(", ")}`,
+      );
+    }
+  }
+
+  return value as unknown as AgentOutput;
+}
+
+export function parseAgentOutput(
+  text: string,
+  schema: AgentOutputSchema,
+  agentLabel: string,
+): AgentOutput {
+  const parsed = parseAgentJson(text, (value) => {
+    try {
+      validateAgentOutput(value, schema);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (parsed !== null) {
+    return validateAgentOutput(parsed, schema);
+  }
+
+  const fallbackParsed = parseAgentJson(text);
+  if (fallbackParsed !== null) {
+    return validateAgentOutput(fallbackParsed, schema);
+  }
+
+  throw new SyntaxError(
+    `${agentLabel} output did not contain a parseable JSON object`,
+  );
+}
+
+export interface AgentOutputCommitField {
+  name: string;
+  allowed?: string[];
+}
+
+// Codex's --output-schema enforces OpenAI strict mode, which requires every
+// key in `properties` to also appear in `required` when additionalProperties
+// is false. So include should_fully_stop only when the run actually uses it.
+export function buildAgentOutputSchema(opts: {
+  includeStopField: boolean;
+  commitFields?: AgentOutputCommitField[];
+}): AgentOutputSchema {
+  const properties: AgentOutputSchema["properties"] = {
+    success: { type: "boolean" },
+    summary: { type: "string" },
+    key_changes_made: { type: "array", items: { type: "string" } },
+    key_learnings: { type: "array", items: { type: "string" } },
+  };
+  const required = ["success", "summary", "key_changes_made", "key_learnings"];
+  for (const field of opts.commitFields ?? []) {
+    properties[field.name] = {
+      type: "string",
+      ...(field.allowed === undefined ? {} : { enum: field.allowed }),
+    };
+    required.push(field.name);
+  }
+  if (opts.includeStopField) {
+    properties.should_fully_stop = { type: "boolean" };
+    required.push("should_fully_stop");
+  }
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties,
+    required,
+  };
+}
+
+export interface TokenUsage {
+  // Adapters must keep these buckets mutually exclusive so totals can sum
+  // input, output, cache-read, and cache-write usage without double-counting.
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  // True when the agent could not source authoritative usage from the model
+  // and the numbers are heuristic estimates. ACP adapters that don't emit
+  // usage_update notifications fall into this case.
+  estimated?: boolean;
+}
+
+// The provider served this iteration from paid extra usage (Claude "usage
+// credits") because the included window was exhausted. Unlike a rejection the
+// request was still served, so the iteration's work is real and is kept; only
+// the next one waits for the window to reset. Reported through `onOverage`
+// rather than the result, since an iteration can spend the window and still
+// end in an error.
+export interface UsageOverage {
+  resumeAt: Date | null;
+}
+
+export interface AgentResult {
+  output: AgentOutput;
+  usage: TokenUsage;
+}
+
+export class PermanentAgentError extends Error {
+  detail: string;
+
+  constructor(message: string, detail: string) {
+    super(message, { cause: detail });
+    this.name = "PermanentAgentError";
+    this.detail = detail;
+  }
+}
+
+// The provider rejected the request because a usage window is exhausted
+// (e.g. the Claude subscription 5-hour window). Unlike retryable errors this
+// carries the provider-reported reset time so the orchestrator can wait for
+// the window to reset instead of burning the consecutive-failure budget.
+export class RateLimitAgentError extends Error {
+  detail: string;
+  resumeAt: Date | null;
+
+  constructor(message: string, detail: string, resumeAt: Date | null) {
+    super(message, { cause: detail });
+    this.name = "RateLimitAgentError";
+    this.detail = detail;
+    this.resumeAt = resumeAt;
+  }
+}
+
+export type OnUsage = (usage: TokenUsage) => void;
+
+export type OnMessage = (text: string) => void;
+
+// Reported out-of-band because overage is orthogonal to how the iteration
+// ends: the window can be spent on an attempt that later fails, and the
+// orchestrator must still wait rather than buy the next iteration. `null`
+// means the provider reported the window recovered.
+export type OnOverage = (overage: UsageOverage | null) => void;
+
+export interface AgentRunOptions {
+  /** Opt-in provider model override for the current iteration. */
+  model?: string;
+  onUsage?: OnUsage;
+  onMessage?: OnMessage;
+  onOverage?: OnOverage;
+  signal?: AbortSignal;
+  logPath?: string;
+}
+
+export interface Agent {
+  name: string;
+  close?(): Promise<void> | void;
+  run(
+    prompt: string,
+    cwd: string,
+    options?: AgentRunOptions,
+  ): Promise<AgentResult>;
+}

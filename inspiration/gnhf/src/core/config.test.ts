@@ -1,0 +1,643 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import yaml from "js-yaml";
+
+vi.mock("node:fs", () => ({
+  readFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+}));
+
+vi.mock("node:os", () => ({
+  homedir: vi.fn(() => "/mock-home"),
+}));
+
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { isAgentSpec, loadConfig } from "./config.js";
+
+const mockMkdirSync = vi.mocked(mkdirSync);
+const mockReadFileSync = vi.mocked(readFileSync);
+const mockWriteFileSync = vi.mocked(writeFileSync);
+
+const HOME = "/mock-home";
+const CONFIG_DIR = join(HOME, ".gnhf");
+const CONFIG_PATH = join(CONFIG_DIR, "config.yml");
+// Golden copy of the bootstrap template written on first run. Read via
+// node:fs/promises because node:fs is mocked in this file. README's
+// Configuration block is pinned to the same golden file by
+// bootstrap-config.test.ts, so all three surfaces cannot drift apart.
+const GOLDEN_BOOTSTRAP_CONFIG = (
+  await readFile(
+    new URL("./bootstrap-config.golden.yml", import.meta.url),
+    "utf-8",
+  )
+).replace(/\r\n/g, "\n");
+const BOOTSTRAP_CONFIG_TEMPLATE = (agent: string) =>
+  GOLDEN_BOOTSTRAP_CONFIG.replace("\nagent: claude\n", `\nagent: ${agent}\n`);
+
+describe("loadConfig", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns defaults when config file does not exist", () => {
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
+    const config = loadConfig();
+
+    expect(mockMkdirSync).toHaveBeenCalledWith(CONFIG_DIR, {
+      recursive: true,
+    });
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      CONFIG_PATH,
+      BOOTSTRAP_CONFIG_TEMPLATE("claude"),
+      "utf-8",
+    );
+    expect(config).toEqual({
+      agent: "claude",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: true,
+    });
+    expect(config).not.toHaveProperty("commitMessage");
+  });
+
+  it("still returns defaults when default config creation fails", () => {
+    mockReadFileSync.mockImplementation(() => {
+      const error = new Error("ENOENT");
+      Object.assign(error, { code: "ENOENT" });
+      throw error;
+    });
+    mockWriteFileSync.mockImplementation(() => {
+      throw new Error("EPERM");
+    });
+
+    const config = loadConfig();
+
+    expect(config).toEqual({
+      agent: "claude",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: true,
+    });
+  });
+
+  it("writes override values when bootstrapping a missing config file", () => {
+    mockReadFileSync.mockImplementation(() => {
+      const error = new Error("ENOENT");
+      Object.assign(error, { code: "ENOENT" });
+      throw error;
+    });
+
+    const config = loadConfig({ agent: "codex" });
+
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      CONFIG_PATH,
+      BOOTSTRAP_CONFIG_TEMPLATE("codex"),
+      "utf-8",
+    );
+    expect(config).toEqual({
+      agent: "codex",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: true,
+    });
+  });
+
+  it("YAML-quotes raw ACP command specs when bootstrapping", () => {
+    mockReadFileSync.mockImplementation(() => {
+      const error = new Error("ENOENT");
+      Object.assign(error, { code: "ENOENT" });
+      throw error;
+    });
+
+    const agent = "acp:./bin/dev-acp --profile ci # local";
+
+    loadConfig({ agent });
+
+    const written = mockWriteFileSync.mock.calls[0]?.[1];
+    expect(typeof written).toBe("string");
+    expect((yaml.load(written as string) as { agent: string }).agent).toBe(
+      agent,
+    );
+  });
+
+  it("writes agentPathOverride values when bootstrapping a missing config file", () => {
+    mockReadFileSync.mockImplementation(() => {
+      const error = new Error("ENOENT");
+      Object.assign(error, { code: "ENOENT" });
+      throw error;
+    });
+
+    const config = loadConfig({
+      agentPathOverride: {
+        claude: "/usr/local/bin/claude-wrapper",
+        codex: "./bin/codex-wrapper",
+      },
+    });
+
+    const resolvedClaude = resolve("/usr/local/bin/claude-wrapper");
+    const resolvedCodex = resolve(CONFIG_DIR, "bin", "codex-wrapper");
+
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      CONFIG_PATH,
+      expect.stringContaining(`claude: ${resolvedClaude}`),
+      "utf-8",
+    );
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      CONFIG_PATH,
+      expect.stringContaining(`codex: ${resolvedCodex}`),
+      "utf-8",
+    );
+    expect(config).toEqual({
+      agent: "claude",
+      agentPathOverride: {
+        claude: resolvedClaude,
+        codex: resolvedCodex,
+      },
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: true,
+    });
+  });
+
+  it("reads config from ~/.gnhf/config.yml", () => {
+    mockReadFileSync.mockReturnValue("agent: codex\n");
+
+    const config = loadConfig();
+
+    expect(mockReadFileSync).toHaveBeenCalledWith(CONFIG_PATH, "utf-8");
+    expect(config.agent).toBe("codex");
+  });
+
+  it("reads the conventional commit message preset from config", () => {
+    mockReadFileSync.mockReturnValue(
+      "commitMessage:\n  preset: conventional\n",
+    );
+
+    const config = loadConfig();
+
+    expect(config.commitMessage).toEqual({
+      preset: "conventional",
+    });
+  });
+
+  it("merges file config with defaults", () => {
+    mockReadFileSync.mockReturnValue("maxConsecutiveFailures: 10\n");
+
+    const config = loadConfig();
+    expect(config).toEqual({
+      agent: "claude",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 10,
+      preventSleep: true,
+    });
+  });
+
+  it('coerces quoted "false" for preventSleep to a boolean false', () => {
+    mockReadFileSync.mockReturnValue('preventSleep: "false"\n');
+
+    const config = loadConfig();
+
+    expect(config).toEqual({
+      agent: "claude",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: false,
+    });
+  });
+
+  it('coerces "off" for preventSleep to a boolean false', () => {
+    mockReadFileSync.mockReturnValue("preventSleep: off\n");
+
+    const config = loadConfig();
+
+    expect(config).toEqual({
+      agent: "claude",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: false,
+    });
+  });
+
+  it("overrides take precedence over file config and defaults", () => {
+    mockReadFileSync.mockReturnValue(
+      "agent: codex\nmaxConsecutiveFailures: 10\npreventSleep: false\n",
+    );
+
+    const config = loadConfig({
+      agent: "claude",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: true,
+    });
+    expect(config).toEqual({
+      agent: "claude",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: true,
+    });
+  });
+
+  it("reads per-agent extra args for all supported agents", () => {
+    mockReadFileSync.mockReturnValue(
+      [
+        "agentArgsOverride:",
+        "  claude:",
+        "    - --model",
+        "    - sonnet",
+        "  codex:",
+        "    - -m",
+        "    - gpt-5.4",
+        "  rovodev:",
+        "    - --profile",
+        "    - work",
+        "  opencode:",
+        "    - --cors",
+        "    - https://example.com",
+        "  copilot:",
+        "    - --model",
+        "    - gpt-5.4",
+        "  pi:",
+        "    - --provider",
+        "    - openai-codex",
+        "    - --model",
+        "    - gpt-5.5",
+        "    - --thinking",
+        "    - high",
+        "  cursor:",
+        "    - --model",
+        "    - composer-2",
+        "",
+      ].join("\n"),
+    );
+
+    const config = loadConfig();
+
+    expect(config.agentArgsOverride).toEqual({
+      claude: ["--model", "sonnet"],
+      codex: ["-m", "gpt-5.4"],
+      rovodev: ["--profile", "work"],
+      opencode: ["--cors", "https://example.com"],
+      copilot: ["--model", "gpt-5.4"],
+      pi: [
+        "--provider",
+        "openai-codex",
+        "--model",
+        "gpt-5.5",
+        "--thinking",
+        "high",
+      ],
+      cursor: ["--model", "composer-2"],
+    });
+  });
+
+  it("handles empty config file gracefully", () => {
+    mockReadFileSync.mockReturnValue("");
+
+    const config = loadConfig();
+    expect(config).toEqual({
+      agent: "claude",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: true,
+    });
+  });
+
+  it("handles invalid YAML gracefully", () => {
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error("invalid yaml");
+    });
+
+    const config = loadConfig();
+    expect(config).toEqual({
+      agent: "claude",
+      agentPathOverride: {},
+      agentModel: {},
+      agentArgsOverride: {},
+      acpRegistryOverrides: {},
+      maxConsecutiveFailures: 3,
+      preventSleep: true,
+    });
+  });
+
+  it("resolves ~ in agentPathOverride to the home directory", () => {
+    mockReadFileSync.mockReturnValue(
+      "agentPathOverride:\n  claude: ~/bin/my-claude\n",
+    );
+
+    const config = loadConfig();
+    expect(config.agentPathOverride.claude).toBe(
+      resolve(join(HOME, "bin", "my-claude")),
+    );
+  });
+
+  it("resolves relative paths in agentPathOverride against the config directory", () => {
+    mockReadFileSync.mockReturnValue(
+      "agentPathOverride:\n  codex: ./bin/my-codex\n",
+    );
+
+    const config = loadConfig();
+    expect(config.agentPathOverride.codex).toBe(
+      resolve(CONFIG_DIR, "bin", "my-codex"),
+    );
+  });
+
+  it("passes absolute paths in agentPathOverride through unchanged", () => {
+    mockReadFileSync.mockReturnValue(
+      "agentPathOverride:\n  claude: /usr/local/bin/my-claude\n",
+    );
+
+    const config = loadConfig();
+    expect(config.agentPathOverride.claude).toBe(
+      resolve("/usr/local/bin/my-claude"),
+    );
+  });
+
+  it("preserves bare executable names in agentPathOverride", () => {
+    mockReadFileSync.mockReturnValue(
+      "agentPathOverride:\n  claude: claude-code-switch\n",
+    );
+
+    const config = loadConfig();
+
+    expect(config.agentPathOverride.claude).toBe("claude-code-switch");
+  });
+
+  it("allows agentArgsOverride.claude to set the dangerous permission flag explicitly", () => {
+    mockReadFileSync.mockReturnValue(
+      "agentArgsOverride:\n  claude:\n    - --dangerously-skip-permissions\n",
+    );
+
+    const config = loadConfig();
+
+    expect(config.agentArgsOverride).toEqual({
+      claude: ["--dangerously-skip-permissions"],
+    });
+  });
+
+  it("allows safe agentArgsOverride.pi flags", () => {
+    mockReadFileSync.mockReturnValue(
+      "agentArgsOverride:\n  pi:\n    - --provider\n    - openai-codex\n    - --model\n    - gpt-5.5\n    - --thinking\n    - high\n",
+    );
+
+    const config = loadConfig();
+
+    expect(config.agentArgsOverride).toEqual({
+      pi: [
+        "--provider",
+        "openai-codex",
+        "--model",
+        "gpt-5.5",
+        "--thinking",
+        "high",
+      ],
+    });
+  });
+
+  it.each([
+    "--mode",
+    "--mode=json",
+    "-p",
+    "--session",
+    "--no-session",
+    "--api-key",
+    "--api-key=secret",
+  ])("throws when agentArgsOverride.pi contains reserved flag %s", (flag) => {
+    mockReadFileSync.mockReturnValue(
+      `agentArgsOverride:\n  pi:\n    - ${flag}\n`,
+    );
+
+    expect(() => loadConfig()).toThrow(
+      /agentArgsOverride\.pi\[0\].*managed by gnhf/,
+    );
+  });
+
+  it("allows safe agentArgsOverride.cursor flags", () => {
+    mockReadFileSync.mockReturnValue(
+      "agentArgsOverride:\n  cursor:\n    - --model\n    - composer-2\n    - --force\n",
+    );
+
+    const config = loadConfig();
+
+    expect(config.agentArgsOverride).toEqual({
+      cursor: ["--model", "composer-2", "--force"],
+    });
+  });
+
+  it("reads agentModel from config", () => {
+    mockReadFileSync.mockReturnValue(
+      [
+        "agentModel:",
+        "  claude: sonnet",
+        "  opencode: fireworks-ai/accounts/fireworks/models/qwen3p6-plus",
+        "",
+      ].join("\n"),
+    );
+
+    const config = loadConfig();
+
+    expect(config.agentModel).toEqual({
+      claude: "sonnet",
+      opencode: "fireworks-ai/accounts/fireworks/models/qwen3p6-plus",
+    });
+  });
+
+  it.each([
+    {
+      agent: "opencode",
+      model: "gpt-5",
+      error: /Invalid model for agentModel\.opencode: expected provider\/model/,
+    },
+    {
+      agent: "opencode",
+      model: "provider/",
+      error: /Invalid model for agentModel\.opencode: expected provider\/model/,
+    },
+    {
+      agent: "opencode",
+      model: "/gpt-5",
+      error: /Invalid model for agentModel\.opencode: expected provider\/model/,
+    },
+    {
+      agent: "rovodev",
+      model: "claude-sonnet-4-5",
+      error: /configure agent\.modelId in Rovo Dev settings instead/,
+    },
+  ])(
+    "rejects unsupported agentModel.$agent values",
+    ({ agent, model, error }) => {
+      mockReadFileSync.mockReturnValue(`agentModel:\n  ${agent}: ${model}\n`);
+
+      expect(() => loadConfig()).toThrow(error);
+    },
+  );
+
+  it("rejects unknown agents and non-string values in agentModel", () => {
+    mockReadFileSync.mockReturnValue("agentModel:\n  unknown-agent: sonnet\n");
+
+    expect(() => loadConfig()).toThrow(
+      /Invalid agent name in agentModel: "unknown-agent"/,
+    );
+
+    mockReadFileSync.mockReturnValue("agentModel:\n  claude: 42\n");
+
+    expect(() => loadConfig()).toThrow(
+      /Invalid model for agentModel\.claude: expected a string/,
+    );
+  });
+
+  it.each(["--model", "--model=sonnet", "-m", "-m=sonnet"])(
+    "throws when agentArgsOverride.opencode contains model flag %s",
+    (flag) => {
+      mockReadFileSync.mockReturnValue(
+        `agentArgsOverride:\n  opencode:\n    - ${flag}\n`,
+      );
+
+      expect(() => loadConfig()).toThrow(/Use --model or agentModel\.opencode/);
+    },
+  );
+
+  it("allows --model in agentArgsOverride for other agents", () => {
+    mockReadFileSync.mockReturnValue(
+      "agentArgsOverride:\n  copilot:\n    - --model\n    - gpt-5.4\n",
+    );
+
+    const config = loadConfig();
+
+    expect(config.agentArgsOverride).toEqual({
+      copilot: ["--model", "gpt-5.4"],
+    });
+  });
+
+  it.each([
+    "-p",
+    "--print",
+    "--output-format",
+    "--output-format=json",
+    "--stream-partial-output",
+    "--workspace",
+    "--workspace=/tmp",
+    "--resume",
+    "--continue",
+    "--worktree",
+    "--api-key",
+    "--api-key=secret",
+  ])(
+    "throws when agentArgsOverride.cursor contains reserved flag %s",
+    (flag) => {
+      mockReadFileSync.mockReturnValue(
+        `agentArgsOverride:\n  cursor:\n    - ${flag}\n`,
+      );
+
+      expect(() => loadConfig()).toThrow(
+        /agentArgsOverride\.cursor\[0\].*managed by gnhf/,
+      );
+    },
+  );
+
+  it("reads acpRegistryOverrides from config", () => {
+    mockReadFileSync.mockReturnValue(
+      [
+        "acpRegistryOverrides:",
+        '  my-fork: "node /opt/my-acp-agent.mjs"',
+        '  staging-claude: "claude-code-beta --acp"',
+        "",
+      ].join("\n"),
+    );
+
+    const config = loadConfig();
+
+    expect(config.acpRegistryOverrides).toEqual({
+      "my-fork": "node /opt/my-acp-agent.mjs",
+      "staging-claude": "claude-code-beta --acp",
+    });
+  });
+
+  it("defaults acpRegistryOverrides to an empty object", () => {
+    mockReadFileSync.mockReturnValue("");
+
+    const config = loadConfig();
+
+    expect(config.acpRegistryOverrides).toEqual({});
+  });
+
+  it.each([
+    {
+      label: "non-object value",
+      yaml: 'acpRegistryOverrides: "not-an-object"\n',
+      expected: "Invalid config value for acpRegistryOverrides",
+    },
+    {
+      label: "array value",
+      yaml: "acpRegistryOverrides:\n  - foo\n",
+      expected: "Invalid config value for acpRegistryOverrides",
+    },
+    {
+      label: "non-string command",
+      yaml: "acpRegistryOverrides:\n  foo: 42\n",
+      expected: "Invalid command for acpRegistryOverrides.foo",
+    },
+    {
+      label: "blank command",
+      yaml: 'acpRegistryOverrides:\n  foo: "   "\n',
+      expected: "Invalid command for acpRegistryOverrides.foo",
+    },
+    {
+      label: "blank target name",
+      yaml: 'acpRegistryOverrides:\n  "": "node x.mjs"\n',
+      expected: "Invalid target name in acpRegistryOverrides",
+    },
+    {
+      label: "target name with space",
+      yaml: 'acpRegistryOverrides:\n  "bad name": "node x.mjs"\n',
+      expected: "Invalid target name in acpRegistryOverrides",
+    },
+  ])("rejects invalid acpRegistryOverrides: $label", ({ yaml, expected }) => {
+    mockReadFileSync.mockReturnValue(yaml);
+    expect(() => loadConfig()).toThrow(expected);
+  });
+});
+
+describe("isAgentSpec", () => {
+  it("accepts raw ACP commands after the acp: prefix", () => {
+    expect(isAgentSpec("acp:./bin/dev-acp --profile ci")).toBe(true);
+    expect(isAgentSpec("acp:npx -y @scope/custom-agent acp")).toBe(true);
+  });
+
+  it("returns false for non-string values", () => {
+    expect(isAgentSpec(42 as unknown as string)).toBe(false);
+  });
+});
