@@ -1,0 +1,654 @@
+package pool
+
+import (
+	"fmt"
+	"os"
+	"sort"
+	"strconv"
+	"time"
+
+	"github.com/kunchenguid/treehouse/v3/internal/hooks"
+	"github.com/kunchenguid/treehouse/v3/internal/process"
+	"github.com/kunchenguid/treehouse/v3/internal/vcs"
+)
+
+// DestroyClass is the safety classification of a worktree considered for
+// destruction. It mirrors the notions prune uses (see analyzeIdleWorktree and
+// analyzePruneCandidate in prune.go): a worktree is disposable only when it is
+// unleased, idle, clean, and merged into the default branch.
+type DestroyClass string
+
+const (
+	// DestroyDisposable means merged, clean, idle, and unleased: the genuinely
+	// safe set that a bare destroy removes.
+	DestroyDisposable DestroyClass = "disposable"
+	// DestroyLeased means the worktree carries a durable lease.
+	DestroyLeased DestroyClass = "leased"
+	// DestroyInUse means an owner reservation or a live process is using it.
+	DestroyInUse DestroyClass = "in-use"
+	// DestroyDirty means the working tree has uncommitted (tracked or untracked)
+	// changes.
+	DestroyDirty DestroyClass = "dirty"
+	// DestroyUnmerged means HEAD is not merged into the default branch ref.
+	DestroyUnmerged DestroyClass = "unmerged"
+	// DestroyUnverified means treehouse could not prove the work landed (backing
+	// repository missing, or status/merge could not be checked). It is gated like
+	// unlanded work because removing it may lose data.
+	DestroyUnverified DestroyClass = "unverified"
+)
+
+// Opt-in flag names recorded on skipped targets so the command layer can tell
+// the user exactly which flag would authorize a risky removal.
+const (
+	IncludeUnlandedFlag = "--include-unlanded"
+	IncludeInUseFlag    = "--include-in-use"
+	IncludeLeasedFlag   = "--include-leased"
+)
+
+// destroyGracePeriod bounds how long destruction waits for lingering worktree
+// processes to exit after SIGTERM before escalating, matching `get`/`return`.
+const destroyGracePeriod = 2 * time.Second
+
+var findProcessesInWorktree = process.FindProcessesInWorktree
+var terminateWorktreeProcesses = process.TerminateWorktreeProcesses
+
+// dropProtectedProcesses removes the caller and its ancestors from a scanned
+// list, leaving the set `return` would terminate. List filters with it so
+// status and return agree on what is attached to a slot, and applies it to the
+// scan it already ran so a failed process-table read stays distinguishable
+// from a failed ancestry walk.
+var dropProtectedProcesses = process.DropProtectedProcesses
+
+type destroyReservation struct {
+	worktree               WorktreeEntry
+	originalOwnerPID       int32
+	originalOwnerStartedAt int64
+}
+
+// DestroyTarget describes one worktree considered for destruction.
+type DestroyTarget struct {
+	Name  string
+	Path  string
+	Bytes int64
+	// Class is the first safety class assigned to the target, kept for simple
+	// callers and stable grouping.
+	Class DestroyClass
+	// Classes lists every safety class assigned to the target. A worktree can be
+	// leased and dirty, for example, and then requires every corresponding flag.
+	Classes   []DestroyClass
+	Processes []process.ProcessInfo
+	// Flavor is the backend the worktree's own marker identifies ("git" or
+	// "jj"), independent of what the repository currently selects.
+	Flavor string
+	// OtherFlavor marks a worktree whose flavor differs from the backend the
+	// repository currently selects; destroying it is the documented pool
+	// migration.
+	OtherFlavor bool
+	// Detail is an honest, user-facing diagnostic for non-disposable targets
+	// (e.g. "HEAD not merged into origin/main" or "held by secondmate").
+	Detail string
+}
+
+// DestroySkip records a worktree left in place and the opt-in flag or flags
+// that would have authorized its removal when a flag can authorize it.
+type DestroySkip struct {
+	Target DestroyTarget
+	// NeededFlag is the --include-* flag that would authorize removal, or empty
+	// when no flag can (e.g. a worktree re-acquired during the pre-destroy hook).
+	NeededFlag string
+	// NeededFlags lists every missing --include-* flag for combined-risk targets.
+	NeededFlags []string
+	// LeasedBulk marks a leased worktree skipped by a bulk pool destroy. Such a
+	// worktree can NEVER be removed by --all; it can only be removed by naming its
+	// exact path with --include-leased.
+	LeasedBulk bool
+}
+
+// DestroyResult reports what a plan would remove (dry run) or did remove.
+type DestroyResult struct {
+	// Planned lists the removable targets: previewed in a dry run, attempted
+	// otherwise.
+	Planned []DestroyTarget
+	// Destroyed lists targets actually removed (empty on a dry run).
+	Destroyed []DestroyTarget
+	// Skipped lists targets left in place and why.
+	Skipped []DestroySkip
+	// PlannedBytes is the reclaimable size of Planned.
+	PlannedBytes int64
+	// FreedBytes is the size freed by Destroyed.
+	FreedBytes int64
+}
+
+// DestroyOptions gates which risky classes a destroy may remove. Each risky
+// class is opt-in so a bare destroy only removes the disposable set.
+type DestroyOptions struct {
+	// DryRun classifies and previews without removing anything.
+	DryRun bool
+	// IncludeUnlanded allows removing dirty, unmerged, or unverified worktrees
+	// (irreversible data loss).
+	IncludeUnlanded bool
+	// IncludeInUse allows removing worktrees with a live process or owner
+	// reservation; their processes are terminated first.
+	IncludeInUse bool
+	// IncludeLeased allows removing leased worktrees. It is honored only when the
+	// exact worktree path is named (DestroyWorktree); a bulk pool destroy never
+	// removes leased worktrees regardless of this flag.
+	IncludeLeased bool
+	// PreDestroy is the hook command list to run before deleting each worktree.
+	PreDestroy []string
+	// InspectTargets observes the locked target snapshot used by bulk destroy.
+	InspectTargets func([]WorktreeEntry)
+}
+
+// DestroyWorktree plans or removes a single named managed worktree. Because the
+// exact path is named, a leased worktree may be removed when IncludeLeased is
+// set. Missing opt-in flags are reported as skips, not errors.
+func DestroyWorktree(poolDir, worktreePath string, opts DestroyOptions) (DestroyResult, error) {
+	var target *WorktreeEntry
+	if err := WithStateLock(poolDir, func() error {
+		state, err := ReadState(poolDir)
+		if err != nil {
+			return err
+		}
+		state, err = healState(poolDir, state)
+		if err != nil {
+			return err
+		}
+		if err := WriteState(poolDir, state); err != nil {
+			return err
+		}
+		for i := range state.Worktrees {
+			if state.Worktrees[i].Path == worktreePath {
+				entry := state.Worktrees[i]
+				target = &entry
+				break
+			}
+		}
+		return nil
+	}); err != nil {
+		return DestroyResult{}, err
+	}
+	if target == nil {
+		return DestroyResult{}, fmt.Errorf("worktree %s is not managed by treehouse", worktreePath)
+	}
+
+	// allowLeased is true: a named path is an explicit, single-target choice.
+	return planAndDestroy(poolDir, []WorktreeEntry{*target}, true, opts)
+}
+
+// DestroyPool plans or removes every managed worktree in poolDir (the bulk
+// `--all` path). Leased worktrees are NEVER removable here, regardless of
+// IncludeLeased: a lease can only be cleared by naming its exact path.
+func DestroyPool(poolDir string, opts DestroyOptions) (DestroyResult, error) {
+	var targets []WorktreeEntry
+	if err := WithStateLock(poolDir, func() error {
+		state, err := ReadState(poolDir)
+		if err != nil {
+			return err
+		}
+		state, err = healState(poolDir, state)
+		if err != nil {
+			return err
+		}
+		if err := WriteState(poolDir, state); err != nil {
+			return err
+		}
+		targets = append([]WorktreeEntry(nil), state.Worktrees...)
+		if opts.InspectTargets != nil {
+			opts.InspectTargets(append([]WorktreeEntry(nil), targets...))
+		}
+		return nil
+	}); err != nil {
+		return DestroyResult{}, err
+	}
+
+	return planAndDestroy(poolDir, targets, false, opts)
+}
+
+func planAndDestroy(poolDir string, targets []WorktreeEntry, allowLeased bool, opts DestroyOptions) (DestroyResult, error) {
+	resolveContext := worktreePruneContextResolver()
+
+	var result DestroyResult
+	var removable []DestroyTarget
+	for _, wt := range targets {
+		// A resolution failure leaves the default ref empty, which
+		// classifyForDestroy reports as unverified rather than disposable.
+		context := resolveDestroyContext(resolveContext, wt)
+		target := classifyForDestroy(wt, context.RepoRoot, context.DefaultRef)
+		measureDestroySize(poolDir, &target)
+		ok, skip := opts.allows(target, allowLeased)
+		if ok {
+			removable = append(removable, target)
+		} else {
+			result.Skipped = append(result.Skipped, skip)
+		}
+	}
+	sortDestroyTargets(removable)
+	sortDestroySkips(result.Skipped)
+	result.Planned = removable
+	for _, t := range removable {
+		result.PlannedBytes += t.Bytes
+	}
+
+	if opts.DryRun {
+		return result, nil
+	}
+
+	destroyed, execSkips, err := executeDestroy(poolDir, removable, resolveContext, allowLeased, opts)
+	if err != nil {
+		return DestroyResult{}, err
+	}
+	result.Destroyed = destroyed
+	for _, t := range destroyed {
+		result.FreedBytes += t.Bytes
+	}
+	result.Skipped = append(result.Skipped, execSkips...)
+	return result, nil
+}
+
+// resolveDestroyContext keeps markerless slots out of the configured-backend
+// fallback, which could otherwise resolve and fetch a repository enclosing the
+// pool. An empty context keeps the damaged slot unverified.
+func resolveDestroyContext(resolveContext pruneContextResolver, wt WorktreeEntry) pruneContext {
+	if vcs.WorktreeBackendName(wt.Path) == "" {
+		return pruneContext{}
+	}
+	context, _ := resolveContext(wt)
+	return context
+}
+
+// allows reports whether opts authorize removing target, returning a populated
+// DestroySkip otherwise.
+func (opts DestroyOptions) allows(target DestroyTarget, allowLeased bool) (bool, DestroySkip) {
+	missing := opts.missingFlags(target, allowLeased)
+	if len(missing) == 0 {
+		return true, DestroySkip{}
+	}
+	return false, DestroySkip{
+		Target:      target,
+		NeededFlag:  missing[0],
+		NeededFlags: missing,
+		LeasedBulk:  target.hasClass(DestroyLeased) && !allowLeased,
+	}
+}
+
+func (opts DestroyOptions) missingFlags(target DestroyTarget, allowLeased bool) []string {
+	var missing []string
+	if target.hasClass(DestroyLeased) && (!allowLeased || !opts.IncludeLeased) {
+		missing = append(missing, IncludeLeasedFlag)
+	}
+	if target.hasClass(DestroyInUse) && !opts.IncludeInUse {
+		missing = append(missing, IncludeInUseFlag)
+	}
+	if target.hasUnlandedClass() && !opts.IncludeUnlanded {
+		missing = append(missing, IncludeUnlandedFlag)
+	}
+	return missing
+}
+
+// classifyForDestroy determines a managed worktree's destroy class using the
+// same safety primitives prune relies on (ownerAlive,
+// process.FindProcessesInWorktree, backingRepositoryMissing, vcs.IsDirty,
+// vcs.IsHeadMergedIntoRef against the ref from resolvePruneDefaultRef, then
+// headLandedOnItsBase against the base the slot was cut from).
+func classifyForDestroy(wt WorktreeEntry, repoRoot, defaultRef string) DestroyTarget {
+	target := DestroyTarget{Name: wt.Name, Path: wt.Path, Flavor: vcs.WorktreeBackendName(wt.Path)}
+	if target.Flavor != "" && repoRoot != "" && target.Flavor != vcs.BackendNameFor(repoRoot) {
+		target.OtherFlavor = true
+	}
+
+	if wt.Leased {
+		detail := ""
+		if wt.LeaseHolder != "" {
+			detail = "held by " + wt.LeaseHolder
+		}
+		target.addClass(DestroyLeased, detail)
+	}
+
+	procs, procErr := findProcessesInWorktree(wt.Path)
+	if ownerAlive(wt) || len(procs) > 0 {
+		target.Processes = procs
+		target.addClass(DestroyInUse, "")
+	}
+	if procErr != nil {
+		target.addClass(DestroyInUse, "cannot check processes: "+procErr.Error())
+	}
+
+	// A markerless slot (its .git/.jj marker is gone) must never have its
+	// facts read through the configured-backend fallback: in an in-project
+	// pool that resolves the repository ENCLOSING the pool, and a clean
+	// enclosing repository would label the damaged slot disposable.
+	if target.Flavor == "" {
+		target.addClass(DestroyUnverified, "no .git or .jj marker: contents cannot be verified")
+		return finalizeDestroyTarget(target)
+	}
+
+	if orphaned, detail := backingRepositoryMissing(wt.Path); orphaned {
+		target.addClass(DestroyUnverified, "backing repository missing: "+detail)
+		return finalizeDestroyTarget(target)
+	}
+
+	dirty, err := vcs.IsDirty(wt.Path)
+	if err != nil {
+		target.addClass(DestroyUnverified, "cannot check status: "+err.Error())
+		return finalizeDestroyTarget(target)
+	} else if dirty {
+		target.addClass(DestroyDirty, "uncommitted changes")
+	}
+
+	if defaultRef == "" {
+		target.addClass(DestroyUnverified, "cannot verify HEAD is merged into the default branch")
+		return finalizeDestroyTarget(target)
+	}
+	ref, err := mergeRefForWorktree(wt.Path, pruneContext{RepoRoot: repoRoot, DefaultRef: defaultRef})
+	if err != nil {
+		target.addClass(DestroyUnverified, "cannot resolve the default branch in this worktree's "+target.Flavor+" backend: "+err.Error())
+		return finalizeDestroyTarget(target)
+	}
+	merged, err := vcs.IsHeadMergedIntoRef(wt.Path, ref)
+	if err != nil {
+		target.addClass(DestroyUnverified, "cannot verify merge into "+ref+": "+err.Error())
+		return finalizeDestroyTarget(target)
+	}
+	if !merged && !headLandedOnItsBase(wt.Path, wt.BaseBranch) {
+		target.addClass(DestroyUnmerged, "HEAD not merged into "+ref)
+	}
+
+	return finalizeDestroyTarget(target)
+}
+
+func (target *DestroyTarget) addClass(class DestroyClass, detail string) {
+	if target.hasClass(class) {
+		return
+	}
+	target.Classes = append(target.Classes, class)
+	if target.Class == "" {
+		target.Class = class
+		target.Detail = detail
+	}
+}
+
+func finalizeDestroyTarget(target DestroyTarget) DestroyTarget {
+	if len(target.Classes) == 0 {
+		target.addClass(DestroyDisposable, "")
+	}
+	return target
+}
+
+func (target DestroyTarget) hasClass(class DestroyClass) bool {
+	for _, existing := range target.Classes {
+		if existing == class {
+			return true
+		}
+	}
+	return target.Class == class
+}
+
+func (target DestroyTarget) hasUnlandedClass() bool {
+	return target.hasClass(DestroyDirty) ||
+		target.hasClass(DestroyUnmerged) ||
+		target.hasClass(DestroyUnverified)
+}
+
+// executeDestroy removes the planned worktrees with the same two-phase
+// reservation prune and the legacy destroy used: it stamps a destroy reservation
+// under the state lock, runs pre-destroy hooks with the lock released, then
+// removes only the worktrees whose reservation is still intact. A worktree
+// re-acquired during its hook (its reservation superseded) is left in place.
+func executeDestroy(poolDir string, removable []DestroyTarget, resolveContext pruneContextResolver, allowLeased bool, opts DestroyOptions) ([]DestroyTarget, []DestroySkip, error) {
+	if len(removable) == 0 {
+		return nil, nil, nil
+	}
+
+	plannedByPath := make(map[string]DestroyTarget, len(removable))
+	for _, t := range removable {
+		plannedByPath[t.Path] = t
+	}
+
+	var reserved []destroyReservation
+	var skips []DestroySkip
+	if err := WithStateLock(poolDir, func() error {
+		state, err := ReadState(poolDir)
+		if err != nil {
+			return err
+		}
+		state, err = healState(poolDir, state)
+		if err != nil {
+			return err
+		}
+		for i := range state.Worktrees {
+			if _, ok := plannedByPath[state.Worktrees[i].Path]; !ok {
+				continue
+			}
+			context := resolveDestroyContext(resolveContext, state.Worktrees[i])
+			current := classifyForDestroy(state.Worktrees[i], context.RepoRoot, context.DefaultRef)
+			if planned, ok := plannedByPath[current.Path]; ok && current.Bytes == 0 {
+				current.Bytes = planned.Bytes
+			}
+			if state.Worktrees[i].Destroying && ownerAlive(state.Worktrees[i]) {
+				current.Detail = "reserved by another destroy"
+				skips = append(skips, DestroySkip{Target: current})
+				continue
+			}
+			ok, skip := opts.allows(current, allowLeased)
+			if !ok {
+				skips = append(skips, skip)
+				continue
+			}
+			reservation, err := reserveDestroyReservation(&state.Worktrees[i])
+			if err != nil {
+				return err
+			}
+			reserved = append(reserved, reservation)
+			plannedByPath[current.Path] = current
+		}
+		return WriteState(poolDir, state)
+	}); err != nil {
+		return nil, nil, err
+	}
+
+	for _, wt := range reserved {
+		hooks.Run(opts.PreDestroy, wt.worktree.Path, os.Stdout, os.Stderr)
+	}
+
+	var destroyed []DestroyTarget
+	if err := WithStateLock(poolDir, func() error {
+		state, err := ReadState(poolDir)
+		if err != nil {
+			return err
+		}
+
+		removed := make(map[string]struct{}, len(reserved))
+		for _, reservation := range reserved {
+			idx := -1
+			for i := range state.Worktrees {
+				if state.Worktrees[i].Path == reservation.worktree.Path {
+					idx = i
+					break
+				}
+			}
+			if idx == -1 {
+				continue
+			}
+			if !sameDestroyReservation(state.Worktrees[idx], reservation.worktree) {
+				// Re-acquired during the pre-destroy hook; never remove it.
+				superseded := plannedByPath[reservation.worktree.Path]
+				superseded.Detail = "re-acquired during pre-destroy hook"
+				skips = append(skips, DestroySkip{Target: superseded})
+				continue
+			}
+
+			path := state.Worktrees[idx].Path
+			currentEntry := state.Worktrees[idx]
+			restoreOriginalOwnerReservation(&currentEntry, reservation)
+			context := resolveDestroyContext(resolveContext, currentEntry)
+			current := classifyForDestroy(currentEntry, context.RepoRoot, context.DefaultRef)
+			measureDestroySize(poolDir, &current)
+			if planned, ok := plannedByPath[path]; ok && current.Bytes == 0 {
+				current.Bytes = planned.Bytes
+			}
+			ok, skip := opts.allows(current, allowLeased)
+			if !ok {
+				restoreOriginalOwnerReservation(&state.Worktrees[idx], reservation)
+				skips = append(skips, skip)
+				continue
+			}
+
+			if current.hasClass(DestroyInUse) {
+				if _, err := terminateWorktreeProcesses(path, destroyGracePeriod); err != nil {
+					restoreOriginalOwnerReservation(&state.Worktrees[idx], reservation)
+					current.Detail = "could not terminate worktree processes: " + err.Error()
+					skips = append(skips, DestroySkip{Target: current})
+					continue
+				}
+				survivors, err := findProcessesInWorktree(path)
+				if err != nil {
+					restoreOriginalOwnerReservation(&state.Worktrees[idx], reservation)
+					current.Detail = "could not verify worktree processes stopped: " + err.Error()
+					skips = append(skips, DestroySkip{Target: current})
+					continue
+				}
+				if len(survivors) > 0 {
+					restoreOriginalOwnerReservation(&state.Worktrees[idx], reservation)
+					current.Processes = survivors
+					current.Detail = "worktree processes still running after termination"
+					skips = append(skips, DestroySkip{Target: current})
+					continue
+				}
+			}
+
+			if err := removeManagedWorktree(poolDir, currentEntry); err != nil {
+				restoreOriginalOwnerReservation(&state.Worktrees[idx], reservation)
+				current.Detail = err.Error()
+				skips = append(skips, DestroySkip{Target: current})
+				continue
+			}
+			removed[path] = struct{}{}
+			destroyed = append(destroyed, current)
+		}
+
+		kept := state.Worktrees[:0]
+		for _, wt := range state.Worktrees {
+			if _, ok := removed[wt.Path]; !ok {
+				kept = append(kept, wt)
+			}
+		}
+		state.Worktrees = kept
+		return WriteState(poolDir, state)
+	}); err != nil {
+		return nil, nil, err
+	}
+
+	sortDestroyTargets(destroyed)
+	sortDestroySkips(skips)
+	return destroyed, skips, nil
+}
+
+func reserveDestroyReservation(wt *WorktreeEntry) (destroyReservation, error) {
+	reservation := destroyReservation{
+		originalOwnerPID:       wt.OwnerPID,
+		originalOwnerStartedAt: wt.OwnerStartedAt,
+	}
+	wt.Destroying = true
+	if err := reserveOwner(wt); err != nil {
+		return destroyReservation{}, err
+	}
+	reservation.worktree = *wt
+	return reservation, nil
+}
+
+func restoreOriginalOwnerReservation(wt *WorktreeEntry, reservation destroyReservation) {
+	wt.Destroying = false
+	wt.OwnerPID = reservation.originalOwnerPID
+	wt.OwnerStartedAt = reservation.originalOwnerStartedAt
+}
+
+// removeManagedWorktree deletes a worktree's git registration (when its backing
+// repository is still present) and the directory removableWorktreeContainer
+// selects: its numbered slot directory inside the pool, or just the worktree
+// when worktree_path placed it elsewhere. git removal uses --force because
+// destroy deliberately removes dirty, unmerged, or unverified worktrees once the
+// caller has opted in.
+func removeManagedWorktree(poolDir string, wt WorktreeEntry) error {
+	path := wt.Path
+	orphaned, _ := backingRepositoryMissing(path)
+	// A markerless slot (directory present, .git/.jj marker gone) has no live
+	// VCS registration either backend will deregister - git refuses to remove
+	// a worktree whose .git file is missing - so it takes the plain-directory
+	// route. The stale registration self-heals at the next add: git via
+	// `git worktree prune`, jj by forgetting a stale same-path workspace
+	// registration.
+	markerless := false
+	if !orphaned {
+		if _, err := os.Stat(path); err == nil {
+			markerless = vcs.WorktreeBackendName(path) == ""
+		}
+	}
+	if !orphaned && !markerless {
+		removeRepoRoot, err := resolvePoolRepoRoot(wt)
+		if err != nil {
+			return fmt.Errorf("cannot resolve repository for worktree removal: %w", err)
+		}
+		if err := vcs.RemoveWorktree(removeRepoRoot, path); err != nil {
+			return fmt.Errorf("VCS refused to remove worktree: %w", err)
+		}
+	}
+	container, err := removableWorktreeContainer(poolDir, path)
+	if err != nil {
+		return fmt.Errorf("refusing unsafe cleanup path: %w", err)
+	}
+	if err := os.RemoveAll(container); err != nil {
+		return fmt.Errorf("could not remove worktree directory: %w", err)
+	}
+	if orphaned || markerless {
+		// Neither route called vcs.RemoveWorktree, so nothing has dropped the
+		// worktree's jj seed authentication.
+		dropStaleJJSeedAuthentication(poolDir, wt)
+	}
+	return nil
+}
+
+// resolvePoolRepoRoot derives one worktree's owning repository from its path.
+// A pool may be shared by multiple clones, so callers must resolve every slot
+// independently and must not apply one slot's root to another.
+func resolvePoolRepoRoot(wt WorktreeEntry) (string, error) {
+	root, err := vcs.FindMainRepoRootFrom(wt.Path)
+	if err != nil {
+		return "", fmt.Errorf("resolve repository for worktree %s: %w", wt.Path, err)
+	}
+	return root, nil
+}
+
+func measureDestroySize(poolDir string, target *DestroyTarget) {
+	container, err := removableWorktreeContainer(poolDir, target.Path)
+	if err != nil {
+		return
+	}
+	if bytes, err := dirSize(container); err == nil {
+		target.Bytes = bytes
+	}
+}
+
+func sortDestroyTargets(targets []DestroyTarget) {
+	sort.SliceStable(targets, func(i, j int) bool {
+		return lessByWorktreeName(targets[i].Name, targets[j].Name)
+	})
+}
+
+func sortDestroySkips(skips []DestroySkip) {
+	sort.SliceStable(skips, func(i, j int) bool {
+		if skips[i].Target.Class != skips[j].Target.Class {
+			return skips[i].Target.Class < skips[j].Target.Class
+		}
+		return lessByWorktreeName(skips[i].Target.Name, skips[j].Target.Name)
+	})
+}
+
+func lessByWorktreeName(a, b string) bool {
+	na, ea := strconv.Atoi(a)
+	nb, eb := strconv.Atoi(b)
+	if ea == nil && eb == nil {
+		return na < nb
+	}
+	return a < b
+}

@@ -1,0 +1,15 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "go",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true,
+      "extra-files": [
+        "default.nix",
+        "flake.nix",
+        "package.nix"
+      ]
+    }
+  },
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"
+}
