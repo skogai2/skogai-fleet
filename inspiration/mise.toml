@@ -1,5 +1,7 @@
 [tools]
 astro = "latest"
 go = "latest"
+pnpm = "latest"
+task = "latest"
 ttyd = "latest"
 vhs = "latest"
